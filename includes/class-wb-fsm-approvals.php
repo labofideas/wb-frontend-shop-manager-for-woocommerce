@@ -310,6 +310,11 @@ class WB_FSM_Approvals {
 			}
 		}
 
+		if ( $product->is_type( 'variable' ) && ! empty( $payload['variation_blueprint'] ) && is_array( $payload['variation_blueprint'] ) ) {
+			$products_service = new WB_FSM_Products();
+			$products_service->apply_variation_blueprint( $product_id, (array) $payload['variation_blueprint'] );
+		}
+
 		return $product_id;
 	}
 
@@ -321,7 +326,7 @@ class WB_FSM_Approvals {
 	 * @return array<string,array{from:mixed,to:mixed}>
 	 */
 	private static function build_diff( array $before, array $after ): array {
-		$keys = array( 'name', 'description', 'sku', 'regular_price', 'sale_price', 'stock_quantity', 'status', 'product_type' );
+		$keys = array( 'name', 'description', 'sku', 'regular_price', 'sale_price', 'stock_quantity', 'status', 'product_type', 'variation_blueprint' );
 		$diff = array();
 		foreach ( $keys as $key ) {
 			$from = $before[ $key ] ?? null;

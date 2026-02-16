@@ -253,6 +253,7 @@ class WB_FSM_Products {
 		$product->save();
 		if ( $product->is_type( 'variable' ) ) {
 			$this->update_variations_from_request( $product_id, $editable );
+			$this->maybe_generate_variations_from_blueprint( $product_id );
 		}
 
 		$this->handle_image_upload( $product_id, $product );
@@ -601,8 +602,174 @@ class WB_FSM_Products {
 					'enabled'        => ! empty( $variation_state[ $variation_id ] ) ? 1 : 0,
 				);
 			}
+
+			$payload['variation_blueprint'] = $this->collect_variation_blueprint();
 		}
 
 		return $payload;
+	}
+
+	/**
+	 * Parse variation blueprint attributes from request.
+	 *
+	 * @return array<int,array{name:string,values:array<int,string>}>
+	 */
+	private function collect_variation_blueprint(): array {
+		$names  = array_map( 'sanitize_text_field', (array) wp_unslash( $_POST['variation_attr_name'] ?? array() ) );
+		$values = (array) wp_unslash( $_POST['variation_attr_values'] ?? array() );
+
+		$blueprint = array();
+		foreach ( $names as $idx => $name ) {
+			$name = trim( $name );
+			if ( '' === $name ) {
+				continue;
+			}
+
+			$row_values_raw = sanitize_text_field( (string) ( $values[ $idx ] ?? '' ) );
+			$row_values     = array_values(
+				array_filter(
+					array_map(
+						static fn( string $item ): string => sanitize_title( trim( $item ) ),
+						preg_split( '/\s*,\s*/', $row_values_raw )
+					)
+				)
+			);
+
+			if ( empty( $row_values ) ) {
+				continue;
+			}
+
+			$blueprint[] = array(
+				'name'   => $name,
+				'values' => array_values( array_unique( $row_values ) ),
+			);
+		}
+
+		return $blueprint;
+	}
+
+	/**
+	 * Create missing variations from posted attribute blueprint.
+	 *
+	 * @param int $product_id Parent product ID.
+	 * @return void
+	 */
+	private function maybe_generate_variations_from_blueprint( int $product_id ): void {
+		$blueprint = $this->collect_variation_blueprint();
+		if ( empty( $blueprint ) ) {
+			return;
+		}
+
+		$product = wc_get_product( $product_id );
+		if ( ! $product || ! $product->is_type( 'variable' ) ) {
+			return;
+		}
+
+		$this->apply_variation_blueprint( $product_id, $blueprint );
+	}
+
+	/**
+	 * Apply attribute blueprint to product and generate combinations.
+	 *
+	 * @param int                                                   $product_id Product ID.
+	 * @param array<int,array{name:string,values:array<int,string>}> $blueprint Attribute blueprint.
+	 * @return void
+	 */
+	public function apply_variation_blueprint( int $product_id, array $blueprint ): void {
+		$product = wc_get_product( $product_id );
+		if ( ! $product || ! $product->is_type( 'variable' ) ) {
+			return;
+		}
+
+		$attributes = array();
+		foreach ( $blueprint as $position => $row ) {
+			$taxonomy_name = sanitize_title( (string) $row['name'] );
+			if ( '' === $taxonomy_name ) {
+				continue;
+			}
+
+			$attribute = new WC_Product_Attribute();
+			$attribute->set_id( 0 );
+			$attribute->set_name( $taxonomy_name );
+			$attribute->set_options( array_values( array_unique( array_map( 'sanitize_title', (array) $row['values'] ) ) ) );
+			$attribute->set_position( $position );
+			$attribute->set_visible( true );
+			$attribute->set_variation( true );
+			$attributes[] = $attribute;
+		}
+
+		if ( empty( $attributes ) ) {
+			return;
+		}
+
+		$product->set_attributes( $attributes );
+		$product->save();
+
+		$option_sets = array();
+		foreach ( $attributes as $attribute ) {
+			$values = array_values( array_filter( array_map( 'sanitize_title', (array) $attribute->get_options() ) ) );
+			if ( empty( $values ) ) {
+				return;
+			}
+
+			$option_sets[] = array(
+				'name'   => 'attribute_' . sanitize_title( $attribute->get_name() ),
+				'values' => $values,
+			);
+		}
+
+		$combinations = $this->build_attribute_combinations( $option_sets );
+		if ( empty( $combinations ) ) {
+			return;
+		}
+
+		$existing = array();
+		foreach ( $product->get_children() as $variation_id ) {
+			$variation = wc_get_product( $variation_id );
+			if ( ! $variation instanceof WC_Product_Variation ) {
+				continue;
+			}
+			$key              = wp_json_encode( $variation->get_attributes() );
+			$existing[ $key ] = true;
+		}
+
+		foreach ( $combinations as $combination ) {
+			$key = wp_json_encode( $combination );
+			if ( isset( $existing[ $key ] ) ) {
+				continue;
+			}
+
+			$variation = new WC_Product_Variation();
+			$variation->set_parent_id( $product_id );
+			$variation->set_attributes( $combination );
+			$variation->set_status( 'publish' );
+			$variation->set_manage_stock( true );
+			$variation->set_stock_quantity( 0 );
+			$variation->set_stock_status( 'outofstock' );
+			$variation->save();
+		}
+	}
+
+	/**
+	 * Cartesian combinations for attribute/value sets.
+	 *
+	 * @param array<int,array{name:string,values:array<int,string>}> $sets Sets.
+	 * @return array<int,array<string,string>>
+	 */
+	private function build_attribute_combinations( array $sets ): array {
+		$combinations = array( array() );
+		foreach ( $sets as $set ) {
+			$tmp = array();
+			foreach ( $combinations as $base ) {
+				foreach ( $set['values'] as $value ) {
+					$row                = $base;
+					$row[ $set['name'] ] = $value;
+					$tmp[]              = $row;
+				}
+			}
+			$combinations = $tmp;
+		}
+
+		return $combinations;
 	}
 }

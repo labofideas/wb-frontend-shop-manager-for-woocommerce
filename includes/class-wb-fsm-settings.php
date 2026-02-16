@@ -403,7 +403,29 @@ class WB_FSM_Settings {
 									<td><?php echo esc_html( get_date_from_gmt( (string) $request_row['created_at_gmt'], 'Y-m-d H:i:s' ) ); ?></td>
 									<td><?php echo esc_html( $user_obj ? $user_obj->display_name . ' (#' . (int) $request_row['user_id'] . ')' : '#' . (int) $request_row['user_id'] ); ?></td>
 									<td><?php echo esc_html( $product_name ); ?></td>
-									<td><?php echo esc_html( ! empty( $diff_keys ) ? implode( ', ', $diff_keys ) : __( 'No field changes detected', 'wb-frontend-shop-manager-for-woocommerce' ) ); ?></td>
+									<td>
+										<?php if ( ! empty( $diff_keys ) ) : ?>
+											<details class="wbfsm-request-details">
+												<summary><?php echo esc_html( implode( ', ', $diff_keys ) ); ?></summary>
+												<ul>
+													<?php foreach ( (array) $request_row['diff'] as $field_key => $diff_row ) : ?>
+														<li>
+															<strong><?php echo esc_html( (string) $field_key ); ?>:</strong>
+															<?php
+															printf(
+																'%1$s → %2$s',
+																esc_html( $this->format_diff_value( $diff_row['from'] ?? null ) ),
+																esc_html( $this->format_diff_value( $diff_row['to'] ?? null ) )
+															);
+															?>
+														</li>
+													<?php endforeach; ?>
+												</ul>
+											</details>
+										<?php else : ?>
+											<?php esc_html_e( 'No field changes detected', 'wb-frontend-shop-manager-for-woocommerce' ); ?>
+										<?php endif; ?>
+									</td>
 									<td>
 										<a class="button button-primary" href="<?php echo esc_url( $approve_url ); ?>"><?php esc_html_e( 'Approve', 'wb-frontend-shop-manager-for-woocommerce' ); ?></a>
 										<a class="button" href="<?php echo esc_url( $reject_url ); ?>"><?php esc_html_e( 'Reject', 'wb-frontend-shop-manager-for-woocommerce' ); ?></a>
@@ -533,5 +555,27 @@ class WB_FSM_Settings {
 			esc_html( $label ),
 			esc_html( $arrow )
 		);
+	}
+
+	/**
+	 * Format diff value for request details UI.
+	 *
+	 * @param mixed $value Value.
+	 * @return string
+	 */
+	private function format_diff_value( $value ): string {
+		if ( null === $value || '' === $value ) {
+			return '—';
+		}
+
+		if ( is_array( $value ) ) {
+			return wp_json_encode( $value ) ?: '[]';
+		}
+
+		if ( is_bool( $value ) ) {
+			return $value ? 'true' : 'false';
+		}
+
+		return (string) $value;
 	}
 }

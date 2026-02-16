@@ -332,6 +332,32 @@
 	border-top: 1px dashed var(--wbfsm-border);
 }
 
+.wbfsm-variation-blueprint {
+	margin-top: 4px;
+	padding: 12px;
+	border: 1px solid var(--wbfsm-border);
+	border-radius: 10px;
+	background: #fbfdff;
+	display: grid;
+	gap: 10px;
+}
+
+.wbfsm-variation-blueprint.is-hidden {
+	display: none;
+}
+
+.wbfsm-variation-blueprint-rows {
+	display: grid;
+	gap: 8px;
+}
+
+.wbfsm-variation-blueprint-row {
+	display: grid;
+	grid-template-columns: 1fr 1.4fr auto;
+	gap: 8px;
+	align-items: center;
+}
+
 .wbfsm-variation-table th,
 .wbfsm-variation-table td {
 	font-size: 0.85rem;
@@ -393,6 +419,10 @@
 	}
 
 	.wbfsm-bulk-bar {
+		grid-template-columns: 1fr;
+	}
+
+	.wbfsm-variation-blueprint-row {
 		grid-template-columns: 1fr;
 	}
 

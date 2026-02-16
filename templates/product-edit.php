@@ -13,12 +13,48 @@ $editable = (array) ( $settings['editable_fields'] ?? array() );
 $is_new   = ! $product;
 $product_type = ( ! $is_new && $product && $product->is_type( 'variable' ) ) ? 'variable' : 'simple';
 $variations = array();
+$blueprint_rows = array(
+	array(
+		'name'   => '',
+		'values' => '',
+	),
+	array(
+		'name'   => '',
+		'values' => '',
+	),
+);
 if ( ! $is_new && 'variable' === $product_type ) {
 	foreach ( $product->get_children() as $variation_id ) {
 		$variation = wc_get_product( $variation_id );
 		if ( $variation instanceof WC_Product_Variation ) {
 			$variations[] = $variation;
 		}
+	}
+
+	$existing_attributes = $product->get_attributes();
+	$blueprint_rows      = array();
+	foreach ( $existing_attributes as $attribute ) {
+		if ( ! $attribute instanceof WC_Product_Attribute || ! $attribute->get_variation() ) {
+			continue;
+		}
+
+		$options = array_map( 'sanitize_title', (array) $attribute->get_options() );
+		$blueprint_rows[] = array(
+			'name'   => wc_attribute_label( $attribute->get_name() ),
+			'values' => implode( ',', $options ),
+		);
+	}
+	if ( empty( $blueprint_rows ) ) {
+		$blueprint_rows = array(
+			array(
+				'name'   => '',
+				'values' => '',
+			),
+			array(
+				'name'   => '',
+				'values' => '',
+			),
+		);
 	}
 }
 ?>
@@ -99,6 +135,21 @@ if ( ! $is_new && 'variable' === $product_type ) {
 				<textarea name="description" rows="6"><?php echo esc_textarea( $product ? $product->get_description() : '' ); ?></textarea>
 			</label>
 		<?php endif; ?>
+
+		<div class="wbfsm-variation-blueprint <?php echo 'variable' === $product_type ? '' : 'is-hidden'; ?>">
+			<h3><?php esc_html_e( 'Variation Generator', 'wb-frontend-shop-manager-for-woocommerce' ); ?></h3>
+			<p><?php esc_html_e( 'Define variation attributes and comma-separated values. Missing combinations will be created on save.', 'wb-frontend-shop-manager-for-woocommerce' ); ?></p>
+			<div class="wbfsm-variation-blueprint-rows">
+				<?php foreach ( $blueprint_rows as $row ) : ?>
+					<div class="wbfsm-variation-blueprint-row">
+						<input type="text" name="variation_attr_name[]" placeholder="<?php esc_attr_e( 'Attribute name (e.g. Size)', 'wb-frontend-shop-manager-for-woocommerce' ); ?>" value="<?php echo esc_attr( (string) $row['name'] ); ?>" />
+						<input type="text" name="variation_attr_values[]" placeholder="<?php esc_attr_e( 'Values (e.g. s,m,l)', 'wb-frontend-shop-manager-for-woocommerce' ); ?>" value="<?php echo esc_attr( (string) $row['values'] ); ?>" />
+						<button type="button" class="wbfsm-btn wbfsm-btn-secondary wbfsm-remove-attr-row"><?php esc_html_e( 'Remove', 'wb-frontend-shop-manager-for-woocommerce' ); ?></button>
+					</div>
+				<?php endforeach; ?>
+			</div>
+			<button type="button" class="wbfsm-btn wbfsm-btn-secondary wbfsm-add-attr-row"><?php esc_html_e( 'Add Attribute Row', 'wb-frontend-shop-manager-for-woocommerce' ); ?></button>
+		</div>
 
 		<?php if ( ! $is_new && 'variable' === $product_type ) : ?>
 			<div class="wbfsm-variation-block">

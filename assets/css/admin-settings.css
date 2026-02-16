@@ -220,6 +220,20 @@
 	color: #fff;
 }
 
+.wbfsm-request-details summary {
+	cursor: pointer;
+	font-weight: 600;
+}
+
+.wbfsm-request-details ul {
+	margin: 8px 0 0 14px;
+}
+
+.wbfsm-request-details li {
+	margin: 4px 0;
+	line-height: 1.4;
+}
+
 @media (max-width: 980px) {
 	.wbfsm-admin-grid {
 		grid-template-columns: 1fr;
