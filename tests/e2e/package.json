@@ -1,0 +1,15 @@
+{
+  "name": "e2e",
+  "version": "1.0.0",
+  "description": "- WordPress local site running. - Plugin active: `wb-frontend-shop-manager-for-woocommerce`. - Playwright installed in a Node environment. - Dev auto-login enabled (supports `?dev_login=USER_ID`).",
+  "main": "playwright.config.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "devDependencies": {
+    "@playwright/test": "^1.58.2"
+  }
+}

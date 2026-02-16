@@ -11,7 +11,9 @@
 
 - `E2E_BASE_URL` (default: `http://wbrbpw.local`)
 - `E2E_DASHBOARD_PATH` (default: `/shop-manager-dashboard/`)
-- `E2E_PARTNER_USER_ID` (default: `2`)
+- `E2E_ADMIN_USER` (default: `wbfsm_e2e_admin`)
+- `E2E_PARTNER_USER` (default: `wbfsm_e2e_partner`)
+- `E2E_USER_PASS` (default: `WbfsmE2e#2026`)
 
 ## Run
 
