@@ -97,12 +97,25 @@ class WB_FSM_Permissions {
 
 		$current_user_id = get_current_user_id();
 		$product         = get_post( $product_id );
+		if ( ! $product ) {
+			return false;
+		}
+
+		$target_product_id = $product_id;
+		if ( 'product_variation' === $product->post_type ) {
+			$parent_id = (int) wp_get_post_parent_id( $product_id );
+			if ( $parent_id <= 0 ) {
+				return false;
+			}
+			$target_product_id = $parent_id;
+			$product           = get_post( $parent_id );
+		}
 
 		if ( ! $product || 'product' !== $product->post_type ) {
 			return false;
 		}
 
-		$assigned_user = (int) get_post_meta( $product_id, '_wb_fsm_assigned_user_id', true );
+		$assigned_user = (int) get_post_meta( $target_product_id, '_wb_fsm_assigned_user_id', true );
 		if ( $assigned_user > 0 ) {
 			return $assigned_user === $current_user_id;
 		}

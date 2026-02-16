@@ -120,6 +120,14 @@ class WB_FSM_Dashboard {
 			'product_updated' => __( 'Product updated successfully.', 'wb-frontend-shop-manager-for-woocommerce' ),
 			'order_updated'   => __( 'Order updated successfully.', 'wb-frontend-shop-manager-for-woocommerce' ),
 		);
+		if ( 'bulk_updated' === sanitize_key( wp_unslash( $_GET['wbfsm_msg'] ?? '' ) ) ) {
+			$bulk_count               = max( 0, absint( wp_unslash( $_GET['wbfsm_bulk_count'] ?? 0 ) ) );
+			$messages['bulk_updated'] = sprintf(
+				/* translators: %d: updated products count. */
+				_n( '%d product updated.', '%d products updated.', $bulk_count, 'wb-frontend-shop-manager-for-woocommerce' ),
+				$bulk_count
+			);
+		}
 
 		switch ( $tab ) {
 			case 'products':

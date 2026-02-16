@@ -18,6 +18,7 @@ class WB_FSM_Products {
 	 */
 	public function init(): void {
 		add_action( 'admin_post_wbfsm_save_product', array( $this, 'handle_save_product' ) );
+		add_action( 'admin_post_wbfsm_bulk_update_products', array( $this, 'handle_bulk_update_products' ) );
 	}
 
 	/**
@@ -30,6 +31,7 @@ class WB_FSM_Products {
 		$search       = sanitize_text_field( wp_unslash( $_GET['s'] ?? '' ) );
 		$stock_status = sanitize_key( wp_unslash( $_GET['stock_status'] ?? '' ) );
 		$category     = absint( wp_unslash( $_GET['category'] ?? 0 ) );
+		$product_type = sanitize_key( wp_unslash( $_GET['product_type'] ?? '' ) );
 
 		$args = array(
 			'post_type'      => 'product',
@@ -50,14 +52,25 @@ class WB_FSM_Products {
 			);
 		}
 
+		$tax_query = array();
 		if ( $category > 0 ) {
-			$args['tax_query'] = array(
-				array(
-					'taxonomy' => 'product_cat',
-					'field'    => 'term_id',
-					'terms'    => $category,
-				),
+			$tax_query[] = array(
+				'taxonomy' => 'product_cat',
+				'field'    => 'term_id',
+				'terms'    => $category,
 			);
+		}
+
+		if ( in_array( $product_type, array( 'simple', 'variable' ), true ) ) {
+			$tax_query[] = array(
+				'taxonomy' => 'product_type',
+				'field'    => 'slug',
+				'terms'    => $product_type,
+			);
+		}
+
+		if ( ! empty( $tax_query ) ) {
+			$args['tax_query'] = $tax_query;
 		}
 
 		if ( ! empty( $meta_query ) ) {
@@ -71,11 +84,12 @@ class WB_FSM_Products {
 					'products'     => array(),
 					'total_pages'  => 1,
 					'current_page' => $paged,
-					'search'       => $search,
-					'stock_status' => $stock_status,
-					'category'     => $category,
-				);
-			}
+						'search'       => $search,
+						'stock_status' => $stock_status,
+						'category'     => $category,
+						'product_type' => $product_type,
+					);
+				}
 
 			$args['post__in'] = $accessible_ids;
 			$args['orderby']  = 'date';
@@ -101,6 +115,7 @@ class WB_FSM_Products {
 			'search'       => $search,
 			'stock_status' => $stock_status,
 			'category'     => $category,
+			'product_type' => $product_type,
 		);
 	}
 
@@ -124,11 +139,15 @@ class WB_FSM_Products {
 		}
 
 		$settings = WB_FSM_Helpers::get_settings();
-		$editable = (array) $settings['editable_fields'];
+		$editable = array_map( 'sanitize_key', (array) $settings['editable_fields'] );
 		$allowed_statuses = array_keys( WB_FSM_Helpers::product_statuses() );
 		$posted_status    = sanitize_key( wp_unslash( $_POST['status'] ?? 'draft' ) );
 		if ( ! in_array( $posted_status, $allowed_statuses, true ) ) {
 			$posted_status = 'draft';
+		}
+		$product_type = sanitize_key( wp_unslash( $_POST['product_type'] ?? 'simple' ) );
+		if ( ! in_array( $product_type, array( 'simple', 'variable' ), true ) ) {
+			$product_type = 'simple';
 		}
 
 		$post_data = array(
@@ -155,6 +174,7 @@ class WB_FSM_Products {
 			$product = wc_get_product( $product_id );
 			if ( $product ) {
 				$before_data = $this->snapshot_product( $product );
+				$product_type = $product->is_type( 'variable' ) ? 'variable' : 'simple';
 			}
 			$post_data['ID'] = $product_id;
 			$product_id      = (int) wp_update_post( $post_data, true );
@@ -167,6 +187,8 @@ class WB_FSM_Products {
 			wp_die( esc_html__( 'Unable to save product.', 'wb-frontend-shop-manager-for-woocommerce' ) );
 		}
 
+		wp_set_object_terms( $product_id, $product_type, 'product_type', false );
+		wc_delete_product_transients( $product_id );
 		$product = wc_get_product( $product_id );
 		if ( ! $product ) {
 			wp_die( esc_html__( 'Product model unavailable.', 'wb-frontend-shop-manager-for-woocommerce' ) );
@@ -187,21 +209,31 @@ class WB_FSM_Products {
 		}
 
 		if ( in_array( 'regular_price', $editable, true ) ) {
-			$product->set_regular_price( wc_format_decimal( wp_unslash( $_POST['regular_price'] ?? '' ) ) );
+			$product->set_regular_price( $product->is_type( 'variable' ) ? '' : wc_format_decimal( wp_unslash( $_POST['regular_price'] ?? '' ) ) );
 		}
 
 		if ( in_array( 'sale_price', $editable, true ) ) {
-			$product->set_sale_price( wc_format_decimal( wp_unslash( $_POST['sale_price'] ?? '' ) ) );
+			$product->set_sale_price( $product->is_type( 'variable' ) ? '' : wc_format_decimal( wp_unslash( $_POST['sale_price'] ?? '' ) ) );
 		}
 
 		if ( in_array( 'stock_quantity', $editable, true ) ) {
-			$qty = wc_stock_amount( wp_unslash( $_POST['stock_quantity'] ?? 0 ) );
-			$product->set_manage_stock( true );
-			$product->set_stock_quantity( $qty );
-			$product->set_stock_status( $qty > 0 ? 'instock' : 'outofstock' );
+			if ( $product->is_type( 'variable' ) ) {
+				$product->set_manage_stock( false );
+				$product->set_stock_quantity( null );
+				$product->set_stock_status( 'instock' );
+			} else {
+				$qty = wc_stock_amount( wp_unslash( $_POST['stock_quantity'] ?? 0 ) );
+				$product->set_manage_stock( true );
+				$product->set_stock_quantity( $qty );
+				$product->set_stock_status( $qty > 0 ? 'instock' : 'outofstock' );
+			}
 		}
 
 		$product->save();
+		if ( $product->is_type( 'variable' ) ) {
+			$this->update_variations_from_request( $product_id, $editable );
+		}
+
 		$this->handle_image_upload( $product_id, $product );
 
 		if ( current_user_can( 'manage_options' ) && array_key_exists( 'assigned_user_id', $_POST ) ) {
@@ -235,21 +267,135 @@ class WB_FSM_Products {
 	}
 
 	/**
+	 * Handle bulk updates from product table.
+	 *
+	 * @return void
+	 */
+	public function handle_bulk_update_products(): void {
+		if ( ! WB_FSM_Permissions::current_user_can_access_dashboard() ) {
+			wp_die( esc_html__( 'You are not allowed to do this.', 'wb-frontend-shop-manager-for-woocommerce' ) );
+		}
+
+		check_admin_referer( 'wbfsm_bulk_update_products' );
+
+		$settings       = WB_FSM_Helpers::get_settings();
+		$editable       = array_map( 'sanitize_key', (array) $settings['editable_fields'] );
+		$product_ids_in = array_map( 'absint', (array) wp_unslash( $_POST['product_ids'] ?? array() ) );
+		$product_ids    = array_values( array_unique( array_filter( $product_ids_in ) ) );
+		$updated_count  = 0;
+
+		$allowed_statuses = array_keys( WB_FSM_Helpers::product_statuses() );
+		$bulk_status      = sanitize_key( wp_unslash( $_POST['bulk_status'] ?? '' ) );
+		if ( ! in_array( $bulk_status, $allowed_statuses, true ) ) {
+			$bulk_status = '';
+		}
+
+		$has_stock_input = '' !== trim( (string) wp_unslash( $_POST['bulk_stock_quantity'] ?? '' ) );
+		$stock_quantity  = $has_stock_input ? wc_stock_amount( wp_unslash( $_POST['bulk_stock_quantity'] ) ) : null;
+
+		foreach ( $product_ids as $product_id ) {
+			if ( ! WB_FSM_Permissions::current_user_can_manage_product( $product_id ) ) {
+				continue;
+			}
+
+			$product = wc_get_product( $product_id );
+			if ( ! $product ) {
+				continue;
+			}
+
+			$before = $this->snapshot_product( $product );
+			$dirty  = false;
+
+			if ( '' !== $bulk_status && in_array( 'status', $editable, true ) ) {
+				$product->set_status( $bulk_status );
+				$dirty = true;
+			}
+
+			if ( $has_stock_input && in_array( 'stock_quantity', $editable, true ) ) {
+				if ( $product->is_type( 'variable' ) ) {
+					foreach ( $product->get_children() as $variation_id ) {
+						$variation = wc_get_product( $variation_id );
+						if ( ! $variation instanceof WC_Product_Variation ) {
+							continue;
+						}
+						$variation->set_manage_stock( true );
+						$variation->set_stock_quantity( $stock_quantity );
+						$variation->set_stock_status( $stock_quantity > 0 ? 'instock' : 'outofstock' );
+						$variation->save();
+					}
+				} else {
+					$product->set_manage_stock( true );
+					$product->set_stock_quantity( $stock_quantity );
+					$product->set_stock_status( $stock_quantity > 0 ? 'instock' : 'outofstock' );
+				}
+				$dirty = true;
+			}
+
+			if ( ! $dirty ) {
+				continue;
+			}
+
+			$product->save();
+			$updated_count++;
+
+			WB_FSM_Audit_Logs::add_log(
+				'product_bulk_update',
+				$product_id,
+				'product',
+				$before,
+				$this->snapshot_product( wc_get_product( $product_id ) ?: $product )
+			);
+		}
+
+		$redirect = add_query_arg(
+			array(
+				'wbfsm_tab'        => 'products',
+				'wbfsm_msg'        => 'bulk_updated',
+				'wbfsm_bulk_count' => $updated_count,
+			),
+			wp_get_referer() ?: home_url( '/' )
+		);
+
+		wp_safe_redirect( $redirect );
+		exit;
+	}
+
+	/**
 	 * Product snapshot for logs.
 	 *
 	 * @param WC_Product $product Product.
 	 * @return array<string,mixed>
 	 */
 	private function snapshot_product( WC_Product $product ): array {
+		$variations = array();
+		if ( $product->is_type( 'variable' ) ) {
+			foreach ( $product->get_children() as $variation_id ) {
+				$variation = wc_get_product( $variation_id );
+				if ( ! $variation instanceof WC_Product_Variation ) {
+					continue;
+				}
+				$variations[] = array(
+					'id'            => $variation->get_id(),
+					'sku'           => $variation->get_sku(),
+					'regular_price' => $variation->get_regular_price(),
+					'sale_price'    => $variation->get_sale_price(),
+					'stock_qty'     => $variation->get_stock_quantity(),
+					'status'        => $variation->get_status(),
+				);
+			}
+		}
+
 		return array(
 			'id'            => $product->get_id(),
 			'name'          => $product->get_name(),
+			'type'          => $product->get_type(),
 			'sku'           => $product->get_sku(),
 			'regular_price' => $product->get_regular_price(),
 			'sale_price'    => $product->get_sale_price(),
 			'stock_qty'     => $product->get_stock_quantity(),
 			'status'        => $product->get_status(),
 			'image_id'      => $product->get_image_id(),
+			'variations'    => $variations,
 		);
 	}
 
@@ -311,5 +457,62 @@ class WB_FSM_Products {
 
 		$product->set_image_id( absint( $attachment_id ) );
 		$product->save();
+	}
+
+	/**
+	 * Update existing variations from frontend request.
+	 *
+	 * @param int               $product_id Parent product ID.
+	 * @param array<int,string> $editable   Editable field keys.
+	 * @return void
+	 */
+	private function update_variations_from_request( int $product_id, array $editable ): void {
+		$variation_ids = array_map( 'absint', (array) wp_unslash( $_POST['variation_ids'] ?? array() ) );
+		$variation_ids = array_values( array_unique( array_filter( $variation_ids ) ) );
+		if ( empty( $variation_ids ) ) {
+			return;
+		}
+
+		$variation_sku   = (array) wp_unslash( $_POST['variation_sku'] ?? array() );
+		$variation_price = (array) wp_unslash( $_POST['variation_regular_price'] ?? array() );
+		$variation_sale  = (array) wp_unslash( $_POST['variation_sale_price'] ?? array() );
+		$variation_stock = (array) wp_unslash( $_POST['variation_stock_quantity'] ?? array() );
+		$variation_state = (array) wp_unslash( $_POST['variation_enabled'] ?? array() );
+
+		foreach ( $variation_ids as $variation_id ) {
+			if ( $variation_id <= 0 || ! WB_FSM_Permissions::current_user_can_manage_product( $variation_id ) ) {
+				continue;
+			}
+
+			$variation = wc_get_product( $variation_id );
+			if ( ! $variation instanceof WC_Product_Variation || (int) $variation->get_parent_id() !== $product_id ) {
+				continue;
+			}
+
+			if ( in_array( 'sku', $editable, true ) ) {
+				$variation->set_sku( sanitize_text_field( (string) ( $variation_sku[ $variation_id ] ?? '' ) ) );
+			}
+
+			if ( in_array( 'regular_price', $editable, true ) ) {
+				$variation->set_regular_price( wc_format_decimal( $variation_price[ $variation_id ] ?? '' ) );
+			}
+
+			if ( in_array( 'sale_price', $editable, true ) ) {
+				$variation->set_sale_price( wc_format_decimal( $variation_sale[ $variation_id ] ?? '' ) );
+			}
+
+			if ( in_array( 'stock_quantity', $editable, true ) ) {
+				$qty = wc_stock_amount( $variation_stock[ $variation_id ] ?? 0 );
+				$variation->set_manage_stock( true );
+				$variation->set_stock_quantity( $qty );
+				$variation->set_stock_status( $qty > 0 ? 'instock' : 'outofstock' );
+			}
+
+			if ( in_array( 'status', $editable, true ) ) {
+				$variation->set_status( ! empty( $variation_state[ $variation_id ] ) ? 'publish' : 'private' );
+			}
+
+			$variation->save();
+		}
 	}
 }
