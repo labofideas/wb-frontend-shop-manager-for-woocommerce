@@ -9,6 +9,8 @@ if ( ! defined( 'ABSPATH' ) ) {
 	exit( 1 );
 }
 
+// phpcs:disable WordPress.NamingConventions.PrefixAllGlobals.NonPrefixedVariableFound
+
 if ( ! class_exists( 'WB_FSM_Orders' ) ) {
 	echo "WB_FSM_Orders class not found.\n";
 	exit( 1 );
@@ -19,7 +21,7 @@ $iterations = max( 1, (int) ( $argv[2] ?? 30 ) );
 $user       = get_user_by( 'login', $user_login );
 
 if ( ! $user ) {
-	echo 'User not found: ' . $user_login . "\n";
+	echo esc_html( 'User not found: ' . $user_login ) . "\n";
 	exit( 1 );
 }
 
@@ -44,3 +46,5 @@ echo wp_json_encode(
 	JSON_PRETTY_PRINT
 );
 echo "\n";
+
+// phpcs:enable WordPress.NamingConventions.PrefixAllGlobals.NonPrefixedVariableFound

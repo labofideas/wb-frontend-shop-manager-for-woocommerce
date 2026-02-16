@@ -9,6 +9,8 @@ if ( ! defined( 'ABSPATH' ) ) {
 	exit( 1 );
 }
 
+// phpcs:disable WordPress.NamingConventions.PrefixAllGlobals.NonPrefixedVariableFound
+
 $results = array();
 $errors  = array();
 
@@ -182,3 +184,4 @@ if ( count( $errors ) > 0 ) {
 	exit( 1 );
 }
 
+// phpcs:enable WordPress.NamingConventions.PrefixAllGlobals.NonPrefixedVariableFound

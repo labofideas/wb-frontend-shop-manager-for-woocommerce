@@ -9,10 +9,11 @@ if ( ! defined( 'ABSPATH' ) ) {
 	exit;
 }
 
-$can_update = ! empty( $settings['allow_order_status_update'] ) || current_user_can( 'manage_options' );
+$wbfsm_can_update = ! empty( $settings['allow_order_status_update'] ) || current_user_can( 'manage_options' );
 ?>
 <div class="wbfsm-card">
 	<div class="wbfsm-card-head">
+		<?php /* translators: %d: order ID. */ ?>
 		<h2><?php echo esc_html( sprintf( __( 'Order #%d', 'wb-frontend-shop-manager-for-woocommerce' ), $order->get_id() ) ); ?></h2>
 		<a class="wbfsm-btn wbfsm-btn-secondary" href="<?php echo esc_url( add_query_arg( array( 'wbfsm_tab' => 'orders', 'order_id' => false ) ) ); ?>"><?php esc_html_e( 'Back to Orders', 'wb-frontend-shop-manager-for-woocommerce' ); ?></a>
 	</div>
@@ -24,17 +25,17 @@ $can_update = ! empty( $settings['allow_order_status_update'] ) || current_user_
 	<table class="wbfsm-table">
 		<thead><tr><th><?php esc_html_e( 'Product', 'wb-frontend-shop-manager-for-woocommerce' ); ?></th><th><?php esc_html_e( 'Qty', 'wb-frontend-shop-manager-for-woocommerce' ); ?></th><th><?php esc_html_e( 'Total', 'wb-frontend-shop-manager-for-woocommerce' ); ?></th></tr></thead>
 		<tbody>
-			<?php foreach ( $order->get_items() as $item ) : ?>
+			<?php foreach ( $order->get_items() as $wbfsm_item ) : ?>
 				<tr>
-					<td><?php echo esc_html( $item->get_name() ); ?></td>
-					<td><?php echo esc_html( (string) $item->get_quantity() ); ?></td>
-					<td><?php echo wp_kses_post( wc_price( (float) $item->get_total(), array( 'currency' => $order->get_currency() ) ) ); ?></td>
+					<td><?php echo esc_html( $wbfsm_item->get_name() ); ?></td>
+					<td><?php echo esc_html( (string) $wbfsm_item->get_quantity() ); ?></td>
+					<td><?php echo wp_kses_post( wc_price( (float) $wbfsm_item->get_total(), array( 'currency' => $order->get_currency() ) ) ); ?></td>
 				</tr>
 			<?php endforeach; ?>
 		</tbody>
 	</table>
 
-	<?php if ( $can_update ) : ?>
+	<?php if ( $wbfsm_can_update ) : ?>
 		<h3><?php esc_html_e( 'Update Order Status', 'wb-frontend-shop-manager-for-woocommerce' ); ?></h3>
 		<form method="post" action="<?php echo esc_url( admin_url( 'admin-post.php' ) ); ?>" class="wbfsm-form">
 			<input type="hidden" name="action" value="wbfsm_update_order_status" />
@@ -43,9 +44,9 @@ $can_update = ! empty( $settings['allow_order_status_update'] ) || current_user_
 			<label>
 				<span><?php esc_html_e( 'New Status', 'wb-frontend-shop-manager-for-woocommerce' ); ?></span>
 				<select name="new_status" required>
-					<?php foreach ( wc_get_order_statuses() as $status_key => $status_label ) : ?>
-						<?php $status_slug = str_replace( 'wc-', '', $status_key ); ?>
-						<option value="<?php echo esc_attr( $status_slug ); ?>" <?php selected( $order->get_status(), $status_slug ); ?>><?php echo esc_html( $status_label ); ?></option>
+					<?php foreach ( wc_get_order_statuses() as $wbfsm_status_key => $wbfsm_status_label ) : ?>
+						<?php $wbfsm_status_slug = str_replace( 'wc-', '', $wbfsm_status_key ); ?>
+						<option value="<?php echo esc_attr( $wbfsm_status_slug ); ?>" <?php selected( $order->get_status(), $wbfsm_status_slug ); ?>><?php echo esc_html( $wbfsm_status_label ); ?></option>
 					<?php endforeach; ?>
 				</select>
 			</label>

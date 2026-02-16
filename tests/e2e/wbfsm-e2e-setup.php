@@ -9,6 +9,8 @@ if ( ! defined( 'ABSPATH' ) ) {
 	exit( 1 );
 }
 
+// phpcs:disable WordPress.NamingConventions.PrefixAllGlobals.NonPrefixedVariableFound
+
 $settings = WB_FSM_Helpers::get_settings();
 
 $settings['enabled']                   = 1;
@@ -74,3 +76,5 @@ echo wp_json_encode(
 	JSON_PRETTY_PRINT
 );
 echo "\n";
+
+// phpcs:enable WordPress.NamingConventions.PrefixAllGlobals.NonPrefixedVariableFound

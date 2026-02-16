@@ -120,24 +120,24 @@ class WB_FSM_Settings {
 			'description'    => __( 'Description', 'wb-frontend-shop-manager-for-woocommerce' ),
 		);
 
-		$page      = max( 1, absint( wp_unslash( $_GET['log_page'] ?? 1 ) ) );
+		$page      = max( 1, absint( self::get_query_arg( 'log_page', '1' ) ) );
 		$log_filters = array(
-			'search'      => sanitize_text_field( wp_unslash( $_GET['log_search'] ?? '' ) ),
-			'action_type' => sanitize_key( wp_unslash( $_GET['log_action'] ?? '' ) ),
-			'user_id'     => absint( wp_unslash( $_GET['log_user'] ?? 0 ) ),
-			'date_from'   => sanitize_text_field( wp_unslash( $_GET['log_from'] ?? '' ) ),
-			'date_to'     => sanitize_text_field( wp_unslash( $_GET['log_to'] ?? '' ) ),
+			'search'      => sanitize_text_field( self::get_query_arg( 'log_search' ) ),
+			'action_type' => sanitize_key( self::get_query_arg( 'log_action' ) ),
+			'user_id'     => absint( self::get_query_arg( 'log_user', '0' ) ),
+			'date_from'   => sanitize_text_field( self::get_query_arg( 'log_from' ) ),
+			'date_to'     => sanitize_text_field( self::get_query_arg( 'log_to' ) ),
 		);
-		$log_sort_by    = sanitize_key( wp_unslash( $_GET['log_sort'] ?? 'date' ) );
-		$log_sort_order = 'asc' === strtolower( sanitize_text_field( wp_unslash( $_GET['log_order'] ?? 'desc' ) ) ) ? 'asc' : 'desc';
+		$log_sort_by    = sanitize_key( self::get_query_arg( 'log_sort', 'date' ) );
+		$log_sort_order = 'asc' === strtolower( sanitize_text_field( self::get_query_arg( 'log_order', 'desc' ) ) ) ? 'asc' : 'desc';
 		$log_data  = WB_FSM_Audit_Logs::get_logs( $page, 20, $log_filters, $log_sort_by, $log_sort_order );
 		$log_pages = max( 1, (int) ceil( $log_data['total'] / 20 ) );
 		$dashboard_page_id = WB_FSM_Helpers::get_dashboard_page_id();
 		$dashboard_url     = WB_FSM_Helpers::get_dashboard_url();
-		$setup_state       = sanitize_key( wp_unslash( $_GET['wbfsm_setup'] ?? '' ) );
+		$setup_state       = sanitize_key( self::get_query_arg( 'wbfsm_setup' ) );
 		$available_actions = WB_FSM_Audit_Logs::get_distinct_action_types();
-		$request_state     = sanitize_key( wp_unslash( $_GET['wbfsm_request'] ?? '' ) );
-		$request_page      = max( 1, absint( wp_unslash( $_GET['request_page'] ?? 1 ) ) );
+		$request_state     = sanitize_key( self::get_query_arg( 'wbfsm_request' ) );
+		$request_page      = max( 1, absint( self::get_query_arg( 'request_page', '1' ) ) );
 		$request_data      = WB_FSM_Approvals::get_requests( $request_page, 10, 'pending' );
 		$request_pages     = max( 1, (int) ceil( $request_data['total'] / 10 ) );
 		$active_filter_chips = array();
@@ -492,14 +492,14 @@ class WB_FSM_Settings {
 		check_admin_referer( 'wbfsm_export_logs' );
 
 		$filters = array(
-			'search'      => sanitize_text_field( wp_unslash( $_GET['log_search'] ?? '' ) ),
-			'action_type' => sanitize_key( wp_unslash( $_GET['log_action'] ?? '' ) ),
-			'user_id'     => absint( wp_unslash( $_GET['log_user'] ?? 0 ) ),
-			'date_from'   => sanitize_text_field( wp_unslash( $_GET['log_from'] ?? '' ) ),
-			'date_to'     => sanitize_text_field( wp_unslash( $_GET['log_to'] ?? '' ) ),
+			'search'      => sanitize_text_field( self::get_query_arg( 'log_search' ) ),
+			'action_type' => sanitize_key( self::get_query_arg( 'log_action' ) ),
+			'user_id'     => absint( self::get_query_arg( 'log_user', '0' ) ),
+			'date_from'   => sanitize_text_field( self::get_query_arg( 'log_from' ) ),
+			'date_to'     => sanitize_text_field( self::get_query_arg( 'log_to' ) ),
 		);
-		$sort_by    = sanitize_key( wp_unslash( $_GET['log_sort'] ?? 'date' ) );
-		$sort_order = 'asc' === strtolower( sanitize_text_field( wp_unslash( $_GET['log_order'] ?? 'desc' ) ) ) ? 'asc' : 'desc';
+		$sort_by    = sanitize_key( self::get_query_arg( 'log_sort', 'date' ) );
+		$sort_order = 'asc' === strtolower( sanitize_text_field( self::get_query_arg( 'log_order', 'desc' ) ) ) ? 'asc' : 'desc';
 
 		$csv = WB_FSM_Audit_Logs::export_logs_csv( $filters, $sort_by, $sort_order );
 		if ( '' === $csv ) {
@@ -577,5 +577,17 @@ class WB_FSM_Settings {
 		}
 
 		return (string) $value;
+	}
+
+	/**
+	 * Safe GET reader for settings UI and filters.
+	 *
+	 * @param string $key Query key.
+	 * @param string $default Default value.
+	 * @return string
+	 */
+	private static function get_query_arg( string $key, string $default = '' ): string {
+		$value = filter_input( INPUT_GET, $key, FILTER_UNSAFE_RAW );
+		return null !== $value ? (string) wp_unslash( $value ) : $default;
 	}
 }

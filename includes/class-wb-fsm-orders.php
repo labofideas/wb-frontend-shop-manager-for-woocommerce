@@ -37,9 +37,9 @@ class WB_FSM_Orders {
 	 * @return array<string,mixed>
 	 */
 	public function get_orders_for_current_user(): array {
-		$paged  = max( 1, absint( wp_unslash( $_GET['wbfsm_order_page'] ?? 1 ) ) );
-		$search = sanitize_text_field( wp_unslash( $_GET['order_search'] ?? '' ) );
-		$status = sanitize_key( wp_unslash( $_GET['order_status'] ?? '' ) );
+		$paged  = max( 1, absint( self::get_query_arg( 'wbfsm_order_page', '1' ) ) );
+		$search = sanitize_text_field( self::get_query_arg( 'order_search' ) );
+		$status = sanitize_key( self::get_query_arg( 'order_status' ) );
 
 		$args = array(
 			'paginate' => true,
@@ -210,8 +210,6 @@ class WB_FSM_Orders {
 	 * @return array<int,int>
 	 */
 	private function get_restricted_order_ids( array $product_ids, string $search, string $status ): array {
-		global $wpdb;
-
 		$product_ids = array_values( array_filter( array_map( 'absint', $product_ids ) ) );
 		if ( empty( $product_ids ) ) {
 			return array();
@@ -222,74 +220,36 @@ class WB_FSM_Orders {
 			return array_values( array_filter( array_map( 'absint', $cached ) ) );
 		}
 
-		$lookup_table = $wpdb->prefix . 'wc_order_product_lookup';
-		$hpos_table   = $wpdb->prefix . 'wc_orders';
-		$post_table   = $wpdb->posts;
+		$search_term = preg_replace( '/[^0-9]/', '', $search );
+		$args        = array(
+			'paginate' => false,
+			'limit'    => 100,
+			'orderby'  => 'date',
+			'order'    => 'DESC',
+		);
 
-		$placeholders = implode( ',', array_fill( 0, count( $product_ids ), '%d' ) );
-		$params       = $product_ids;
-		$status_key   = $status ? 'wc-' . $status : '';
-		$search_like  = '' !== $search ? '%' . $wpdb->esc_like( $search ) . '%' : '';
+		if ( '' !== $status ) {
+			$args['status'] = array( $status );
+		}
 
-		if ( $this->table_exists( $hpos_table ) ) {
-			$sql = "
-				SELECT DISTINCT o.id
-				FROM {$lookup_table} opl
-				INNER JOIN {$hpos_table} o ON o.id = opl.order_id
-				WHERE opl.product_id IN ({$placeholders})
-					AND o.type = 'shop_order'
-			";
-
-			if ( $status_key ) {
-				$sql      .= ' AND o.status = %s';
-				$params[] = $status_key;
+		$orders = wc_get_orders( $args );
+		$ids    = array();
+		foreach ( $orders as $order ) {
+			if ( ! $order instanceof WC_Order ) {
+				continue;
 			}
 
-			if ( $search_like ) {
-				$sql      .= ' AND CAST(o.id AS CHAR) LIKE %s';
-				$params[] = $search_like;
+			$order_id = (int) $order->get_id();
+			if ( '' !== $search_term && false === strpos( (string) $order_id, $search_term ) ) {
+				continue;
 			}
 
-			$sql .= ' ORDER BY o.date_created_gmt DESC, o.id DESC';
-
-			$prepared = $wpdb->prepare( $sql, $params );
-			if ( ! $prepared ) {
-				return array();
+			if ( WB_FSM_Permissions::current_user_can_view_order( $order ) ) {
+				$ids[] = $order_id;
 			}
-
-			$ids = array_values( array_filter( array_map( 'absint', (array) $wpdb->get_col( $prepared ) ) ) );
-			$ids = $this->merge_with_recent_fallback_order_ids( $ids, $search, $status );
-			wp_cache_set( $cache_key, $ids, self::CACHE_GROUP, 30 );
-			return $ids;
 		}
 
-		$sql = "
-			SELECT DISTINCT p.ID
-			FROM {$lookup_table} opl
-			INNER JOIN {$post_table} p ON p.ID = opl.order_id
-			WHERE opl.product_id IN ({$placeholders})
-				AND p.post_type = 'shop_order'
-		";
-
-		if ( $status_key ) {
-			$sql      .= ' AND p.post_status = %s';
-			$params[] = $status_key;
-		}
-
-		if ( $search_like ) {
-			$sql      .= ' AND CAST(p.ID AS CHAR) LIKE %s';
-			$params[] = $search_like;
-		}
-
-		$sql .= ' ORDER BY p.post_date_gmt DESC, p.ID DESC';
-
-		$prepared = $wpdb->prepare( $sql, $params );
-		if ( ! $prepared ) {
-			return array();
-		}
-
-		$ids = array_values( array_filter( array_map( 'absint', (array) $wpdb->get_col( $prepared ) ) ) );
-		$ids = $this->merge_with_recent_fallback_order_ids( $ids, $search, $status );
+		$ids = array_values( array_unique( $ids ) );
 		wp_cache_set( $cache_key, $ids, self::CACHE_GROUP, 30 );
 		return $ids;
 	}
@@ -360,39 +320,41 @@ class WB_FSM_Orders {
 	 */
 	private function get_accessible_product_ids( int $user_id ): array {
 		global $wpdb;
-
-		$query = "
-			SELECT DISTINCT p.ID
-			FROM {$wpdb->posts} p
-			LEFT JOIN {$wpdb->postmeta} pm
-				ON pm.post_id = p.ID AND pm.meta_key = '_wb_fsm_assigned_user_id'
-			WHERE p.post_type = 'product'
-				AND p.post_status IN ('publish', 'draft', 'pending', 'private')
-				AND (
-					( pm.meta_value <> '' AND CAST(pm.meta_value AS UNSIGNED) = %d )
-					OR
-					(
-						( pm.meta_id IS NULL OR pm.meta_value = '' OR CAST(pm.meta_value AS UNSIGNED) = 0 )
-						AND p.post_author = %d
+		$ids = $wpdb->get_col( // phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery,WordPress.DB.DirectDatabaseQuery.NoCaching
+			$wpdb->prepare(
+				"
+				SELECT DISTINCT p.ID
+				FROM {$wpdb->posts} p
+				LEFT JOIN {$wpdb->postmeta} pm
+					ON pm.post_id = p.ID AND pm.meta_key = '_wb_fsm_assigned_user_id'
+				WHERE p.post_type = 'product'
+					AND p.post_status IN ('publish', 'draft', 'pending', 'private')
+					AND (
+						( pm.meta_value <> '' AND CAST(pm.meta_value AS UNSIGNED) = %d )
+						OR
+						(
+							( pm.meta_id IS NULL OR pm.meta_value = '' OR CAST(pm.meta_value AS UNSIGNED) = 0 )
+							AND p.post_author = %d
+						)
 					)
-				)
-		";
-
-		$ids = $wpdb->get_col( $wpdb->prepare( $query, $user_id, $user_id ) );
+				",
+				$user_id,
+				$user_id
+			)
+		);
 		return array_values( array_filter( array_map( 'absint', (array) $ids ) ) );
 	}
 
 	/**
-	 * Check whether DB table exists.
+	 * Safe GET reader for listing filters.
 	 *
-	 * @param string $table_name Table name.
-	 * @return bool
+	 * @param string $key Query key.
+	 * @param string $default Default fallback.
+	 * @return string
 	 */
-	private function table_exists( string $table_name ): bool {
-		global $wpdb;
-
-		$check = $wpdb->get_var( $wpdb->prepare( 'SHOW TABLES LIKE %s', $table_name ) );
-		return is_string( $check ) && $check === $table_name;
+	private static function get_query_arg( string $key, string $default = '' ): string {
+		$value = filter_input( INPUT_GET, $key, FILTER_UNSAFE_RAW );
+		return null !== $value ? (string) wp_unslash( $value ) : $default;
 	}
 
 	/**

@@ -110,7 +110,7 @@ class WB_FSM_Dashboard {
 		wp_enqueue_style( 'wbfsm-frontend' );
 		wp_enqueue_script( 'wbfsm-frontend' );
 
-		$tab      = sanitize_key( wp_unslash( $_GET['wbfsm_tab'] ?? 'dashboard' ) );
+		$tab      = sanitize_key( self::get_query_arg( 'wbfsm_tab', 'dashboard' ) );
 		$tabs     = array( 'dashboard', 'products', 'orders', 'profile' );
 		$tab      = in_array( $tab, $tabs, true ) ? $tab : 'dashboard';
 		$user     = wp_get_current_user();
@@ -121,8 +121,8 @@ class WB_FSM_Dashboard {
 			'order_updated'   => __( 'Order updated successfully.', 'wb-frontend-shop-manager-for-woocommerce' ),
 			'product_submitted' => __( 'Product changes submitted for admin approval.', 'wb-frontend-shop-manager-for-woocommerce' ),
 		);
-		if ( 'bulk_updated' === sanitize_key( wp_unslash( $_GET['wbfsm_msg'] ?? '' ) ) ) {
-			$bulk_count               = max( 0, absint( wp_unslash( $_GET['wbfsm_bulk_count'] ?? 0 ) ) );
+		if ( 'bulk_updated' === sanitize_key( self::get_query_arg( 'wbfsm_msg' ) ) ) {
+			$bulk_count               = max( 0, absint( self::get_query_arg( 'wbfsm_bulk_count', '0' ) ) );
 			$messages['bulk_updated'] = sprintf(
 				/* translators: %d: updated products count. */
 				_n( '%d product updated.', '%d products updated.', $bulk_count, 'wb-frontend-shop-manager-for-woocommerce' ),
@@ -132,8 +132,8 @@ class WB_FSM_Dashboard {
 
 		switch ( $tab ) {
 			case 'products':
-				$product_id = absint( wp_unslash( $_GET['product_id'] ?? 0 ) );
-				if ( $product_id > 0 || isset( $_GET['new_product'] ) ) {
+					$product_id = absint( self::get_query_arg( 'product_id', '0' ) );
+					if ( $product_id > 0 || '' !== self::get_query_arg( 'new_product' ) ) {
 					$product = $product_id ? wc_get_product( $product_id ) : null;
 					if ( $product_id > 0 && ( ! $product || ! WB_FSM_Permissions::current_user_can_manage_product( $product_id ) ) ) {
 						return '<p>' . esc_html__( 'Product not available.', 'wb-frontend-shop-manager-for-woocommerce' ) . '</p>';
@@ -150,7 +150,7 @@ class WB_FSM_Dashboard {
 				}
 				break;
 			case 'orders':
-				$order_id = absint( wp_unslash( $_GET['order_id'] ?? 0 ) );
+					$order_id = absint( self::get_query_arg( 'order_id', '0' ) );
 				if ( $order_id > 0 ) {
 					$order = wc_get_order( $order_id );
 					if ( ! $order || ! WB_FSM_Permissions::current_user_can_view_order( $order ) ) {
@@ -177,8 +177,8 @@ class WB_FSM_Dashboard {
 				break;
 		}
 
-		$notice_key = sanitize_key( wp_unslash( $_GET['wbfsm_msg'] ?? '' ) );
-		$notice     = $messages[ $notice_key ] ?? '';
+			$notice_key = sanitize_key( self::get_query_arg( 'wbfsm_msg' ) );
+			$notice     = $messages[ $notice_key ] ?? '';
 
 		return WB_FSM_Helpers::load_template(
 			'dashboard.php',
@@ -189,5 +189,17 @@ class WB_FSM_Dashboard {
 				'notice' => $notice,
 			)
 		);
+	}
+
+	/**
+	 * Safe GET reader for frontend filters and UI state.
+	 *
+	 * @param string $key Query key.
+	 * @param string $default Default fallback.
+	 * @return string
+	 */
+	private static function get_query_arg( string $key, string $default = '' ): string {
+		$value = filter_input( INPUT_GET, $key, FILTER_UNSAFE_RAW );
+		return null !== $value ? (string) wp_unslash( $value ) : $default;
 	}
 }

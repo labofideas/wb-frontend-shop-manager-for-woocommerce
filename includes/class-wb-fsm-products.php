@@ -27,11 +27,11 @@ class WB_FSM_Products {
 	 * @return array<string,mixed>
 	 */
 	public function get_products_for_current_user(): array {
-		$paged        = max( 1, absint( wp_unslash( $_GET['wbfsm_page'] ?? 1 ) ) );
-		$search       = sanitize_text_field( wp_unslash( $_GET['s'] ?? '' ) );
-		$stock_status = sanitize_key( wp_unslash( $_GET['stock_status'] ?? '' ) );
-		$category     = absint( wp_unslash( $_GET['category'] ?? 0 ) );
-		$product_type = sanitize_key( wp_unslash( $_GET['product_type'] ?? '' ) );
+		$paged        = max( 1, absint( self::get_query_arg( 'wbfsm_page', '1' ) ) );
+		$search       = sanitize_text_field( self::get_query_arg( 's' ) );
+		$stock_status = sanitize_key( self::get_query_arg( 'stock_status' ) );
+		$category     = absint( self::get_query_arg( 'category', '0' ) );
+		$product_type = sanitize_key( self::get_query_arg( 'product_type' ) );
 
 		$args = array(
 			'post_type'      => 'product',
@@ -70,10 +70,12 @@ class WB_FSM_Products {
 		}
 
 		if ( ! empty( $tax_query ) ) {
+			// phpcs:ignore WordPress.DB.SlowDBQuery.slow_db_query_tax_query -- Needed for explicit category/type filters.
 			$args['tax_query'] = $tax_query;
 		}
 
 		if ( ! empty( $meta_query ) ) {
+			// phpcs:ignore WordPress.DB.SlowDBQuery.slow_db_query_meta_query -- Needed for explicit stock-status filters.
 			$args['meta_query'] = $meta_query;
 		}
 
@@ -229,13 +231,13 @@ class WB_FSM_Products {
 			$product->set_sku( sanitize_text_field( wp_unslash( $_POST['sku'] ?? '' ) ) );
 		}
 
-		if ( in_array( 'regular_price', $editable, true ) ) {
-			$product->set_regular_price( $product->is_type( 'variable' ) ? '' : wc_format_decimal( wp_unslash( $_POST['regular_price'] ?? '' ) ) );
-		}
+			if ( in_array( 'regular_price', $editable, true ) ) {
+				$product->set_regular_price( $product->is_type( 'variable' ) ? '' : wc_format_decimal( sanitize_text_field( wp_unslash( $_POST['regular_price'] ?? '' ) ) ) );
+			}
 
-		if ( in_array( 'sale_price', $editable, true ) ) {
-			$product->set_sale_price( $product->is_type( 'variable' ) ? '' : wc_format_decimal( wp_unslash( $_POST['sale_price'] ?? '' ) ) );
-		}
+			if ( in_array( 'sale_price', $editable, true ) ) {
+				$product->set_sale_price( $product->is_type( 'variable' ) ? '' : wc_format_decimal( sanitize_text_field( wp_unslash( $_POST['sale_price'] ?? '' ) ) ) );
+			}
 
 		if ( in_array( 'stock_quantity', $editable, true ) ) {
 			if ( $product->is_type( 'variable' ) ) {
@@ -243,7 +245,7 @@ class WB_FSM_Products {
 				$product->set_stock_quantity( null );
 				$product->set_stock_status( 'instock' );
 			} else {
-				$qty = wc_stock_amount( wp_unslash( $_POST['stock_quantity'] ?? 0 ) );
+					$qty = wc_stock_amount( sanitize_text_field( wp_unslash( $_POST['stock_quantity'] ?? '0' ) ) );
 				$product->set_manage_stock( true );
 				$product->set_stock_quantity( $qty );
 				$product->set_stock_status( $qty > 0 ? 'instock' : 'outofstock' );
@@ -312,8 +314,10 @@ class WB_FSM_Products {
 			$bulk_status = '';
 		}
 
-		$has_stock_input = '' !== trim( (string) wp_unslash( $_POST['bulk_stock_quantity'] ?? '' ) );
-		$stock_quantity  = $has_stock_input ? wc_stock_amount( wp_unslash( $_POST['bulk_stock_quantity'] ) ) : null;
+		// phpcs:ignore WordPress.Security.ValidatedSanitizedInput.InputNotSanitized
+		$bulk_stock_raw  = sanitize_text_field( wp_unslash( $_POST['bulk_stock_quantity'] ?? '' ) );
+		$has_stock_input = '' !== trim( $bulk_stock_raw );
+		$stock_quantity  = $has_stock_input ? wc_stock_amount( $bulk_stock_raw ) : null;
 
 		foreach ( $product_ids as $product_id ) {
 			if ( ! WB_FSM_Permissions::current_user_can_manage_product( $product_id ) ) {
@@ -430,24 +434,28 @@ class WB_FSM_Products {
 	private function get_accessible_product_ids( int $user_id ): array {
 		global $wpdb;
 
-		$query = "
-			SELECT DISTINCT p.ID
-			FROM {$wpdb->posts} p
-			LEFT JOIN {$wpdb->postmeta} pm
-				ON pm.post_id = p.ID AND pm.meta_key = '_wb_fsm_assigned_user_id'
-			WHERE p.post_type = 'product'
-				AND p.post_status IN ('publish', 'draft', 'pending', 'private')
-				AND (
-					( pm.meta_value <> '' AND CAST(pm.meta_value AS UNSIGNED) = %d )
-					OR
-					(
-						( pm.meta_id IS NULL OR pm.meta_value = '' OR CAST(pm.meta_value AS UNSIGNED) = 0 )
-						AND p.post_author = %d
+		$ids = $wpdb->get_col( // phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery,WordPress.DB.DirectDatabaseQuery.NoCaching
+			$wpdb->prepare(
+				"
+				SELECT DISTINCT p.ID
+				FROM {$wpdb->posts} p
+				LEFT JOIN {$wpdb->postmeta} pm
+					ON pm.post_id = p.ID AND pm.meta_key = '_wb_fsm_assigned_user_id'
+				WHERE p.post_type = 'product'
+					AND p.post_status IN ('publish', 'draft', 'pending', 'private')
+					AND (
+						( pm.meta_value <> '' AND CAST(pm.meta_value AS UNSIGNED) = %d )
+						OR
+						(
+							( pm.meta_id IS NULL OR pm.meta_value = '' OR CAST(pm.meta_value AS UNSIGNED) = 0 )
+							AND p.post_author = %d
+						)
 					)
-				)
-		";
-
-		$ids = $wpdb->get_col( $wpdb->prepare( $query, $user_id, $user_id ) );
+				",
+				$user_id,
+				$user_id
+			)
+		);
 
 		return array_values( array_filter( array_map( 'absint', (array) $ids ) ) );
 	}
@@ -460,10 +468,12 @@ class WB_FSM_Products {
 	 * @return void
 	 */
 	private function handle_image_upload( int $product_id, WC_Product $product ): void {
+		// phpcs:ignore WordPress.Security.NonceVerification.Missing -- Nonce verified in handle_save_product().
 		if ( empty( $_FILES['product_image']['name'] ) || ! isset( $_FILES['product_image']['error'] ) ) {
 			return;
 		}
 
+		// phpcs:ignore WordPress.Security.NonceVerification.Missing -- Nonce verified in handle_save_product().
 		if ( UPLOAD_ERR_OK !== (int) $_FILES['product_image']['error'] ) {
 			return;
 		}
@@ -489,17 +499,23 @@ class WB_FSM_Products {
 	 * @return void
 	 */
 	private function update_variations_from_request( int $product_id, array $editable ): void {
+		// phpcs:ignore WordPress.Security.NonceVerification.Missing -- Nonce verified in handle_save_product().
 		$variation_ids = array_map( 'absint', (array) wp_unslash( $_POST['variation_ids'] ?? array() ) );
 		$variation_ids = array_values( array_unique( array_filter( $variation_ids ) ) );
 		if ( empty( $variation_ids ) ) {
 			return;
 		}
 
-		$variation_sku   = (array) wp_unslash( $_POST['variation_sku'] ?? array() );
-		$variation_price = (array) wp_unslash( $_POST['variation_regular_price'] ?? array() );
-		$variation_sale  = (array) wp_unslash( $_POST['variation_sale_price'] ?? array() );
-		$variation_stock = (array) wp_unslash( $_POST['variation_stock_quantity'] ?? array() );
-		$variation_state = (array) wp_unslash( $_POST['variation_enabled'] ?? array() );
+		// phpcs:ignore WordPress.Security.NonceVerification.Missing,WordPress.Security.ValidatedSanitizedInput.InputNotSanitized -- Nonce verified in handle_save_product().
+		$variation_sku   = array_map( 'sanitize_text_field', (array) wp_unslash( $_POST['variation_sku'] ?? array() ) );
+		// phpcs:ignore WordPress.Security.NonceVerification.Missing,WordPress.Security.ValidatedSanitizedInput.InputNotSanitized -- Nonce verified in handle_save_product().
+		$variation_price = array_map( 'sanitize_text_field', (array) wp_unslash( $_POST['variation_regular_price'] ?? array() ) );
+		// phpcs:ignore WordPress.Security.NonceVerification.Missing,WordPress.Security.ValidatedSanitizedInput.InputNotSanitized -- Nonce verified in handle_save_product().
+		$variation_sale  = array_map( 'sanitize_text_field', (array) wp_unslash( $_POST['variation_sale_price'] ?? array() ) );
+		// phpcs:ignore WordPress.Security.NonceVerification.Missing,WordPress.Security.ValidatedSanitizedInput.InputNotSanitized -- Nonce verified in handle_save_product().
+		$variation_stock = array_map( 'sanitize_text_field', (array) wp_unslash( $_POST['variation_stock_quantity'] ?? array() ) );
+		// phpcs:ignore WordPress.Security.NonceVerification.Missing,WordPress.Security.ValidatedSanitizedInput.InputNotSanitized -- Nonce verified in handle_save_product().
+		$variation_state = array_map( 'absint', (array) wp_unslash( $_POST['variation_enabled'] ?? array() ) );
 
 		foreach ( $variation_ids as $variation_id ) {
 			if ( $variation_id <= 0 || ! WB_FSM_Permissions::current_user_can_manage_product( $variation_id ) ) {
@@ -516,15 +532,15 @@ class WB_FSM_Products {
 			}
 
 			if ( in_array( 'regular_price', $editable, true ) ) {
-				$variation->set_regular_price( wc_format_decimal( $variation_price[ $variation_id ] ?? '' ) );
-			}
+					$variation->set_regular_price( wc_format_decimal( sanitize_text_field( (string) ( $variation_price[ $variation_id ] ?? '' ) ) ) );
+				}
 
 			if ( in_array( 'sale_price', $editable, true ) ) {
-				$variation->set_sale_price( wc_format_decimal( $variation_sale[ $variation_id ] ?? '' ) );
-			}
+					$variation->set_sale_price( wc_format_decimal( sanitize_text_field( (string) ( $variation_sale[ $variation_id ] ?? '' ) ) ) );
+				}
 
 			if ( in_array( 'stock_quantity', $editable, true ) ) {
-				$qty = wc_stock_amount( $variation_stock[ $variation_id ] ?? 0 );
+					$qty = wc_stock_amount( sanitize_text_field( (string) ( $variation_stock[ $variation_id ] ?? '0' ) ) );
 				$variation->set_manage_stock( true );
 				$variation->set_stock_quantity( $qty );
 				$variation->set_stock_status( $qty > 0 ? 'instock' : 'outofstock' );
@@ -548,17 +564,30 @@ class WB_FSM_Products {
 	 * @return array<string,mixed>
 	 */
 	private function collect_payload_from_request( int $product_id, string $product_type, array $editable, string $posted_status ): array {
+			// phpcs:ignore WordPress.Security.NonceVerification.Missing,WordPress.Security.ValidatedSanitizedInput.InputNotSanitized -- Nonce verified in handle_save_product().
+			$product_name = sanitize_text_field( wp_unslash( $_POST['name'] ?? '' ) );
+			// phpcs:ignore WordPress.Security.NonceVerification.Missing,WordPress.Security.ValidatedSanitizedInput.InputNotSanitized -- Nonce verified in handle_save_product().
+			$product_desc = wp_kses_post( wp_unslash( $_POST['description'] ?? '' ) );
+			// phpcs:ignore WordPress.Security.NonceVerification.Missing,WordPress.Security.ValidatedSanitizedInput.InputNotSanitized -- Nonce verified in handle_save_product().
+			$product_sku = sanitize_text_field( wp_unslash( $_POST['sku'] ?? '' ) );
+			// phpcs:ignore WordPress.Security.NonceVerification.Missing,WordPress.Security.ValidatedSanitizedInput.InputNotSanitized -- Nonce verified in handle_save_product().
+			$product_regular = wc_format_decimal( sanitize_text_field( wp_unslash( $_POST['regular_price'] ?? '' ) ) );
+			// phpcs:ignore WordPress.Security.NonceVerification.Missing,WordPress.Security.ValidatedSanitizedInput.InputNotSanitized -- Nonce verified in handle_save_product().
+			$product_sale = wc_format_decimal( sanitize_text_field( wp_unslash( $_POST['sale_price'] ?? '' ) ) );
+			// phpcs:ignore WordPress.Security.NonceVerification.Missing,WordPress.Security.ValidatedSanitizedInput.InputNotSanitized -- Nonce verified in handle_save_product().
+			$product_stock = wc_stock_amount( sanitize_text_field( wp_unslash( $_POST['stock_quantity'] ?? '0' ) ) );
+
 		$payload = array(
 			'product_id'     => $product_id,
 			'product_type'   => $product_type,
-			'name'           => sanitize_text_field( wp_unslash( $_POST['name'] ?? '' ) ),
-			'description'    => wp_kses_post( wp_unslash( $_POST['description'] ?? '' ) ),
+			'name'           => $product_name,
+			'description'    => $product_desc,
 			'status'         => $posted_status,
-			'sku'            => sanitize_text_field( wp_unslash( $_POST['sku'] ?? '' ) ),
-			'regular_price'  => wc_format_decimal( wp_unslash( $_POST['regular_price'] ?? '' ) ),
-			'sale_price'     => wc_format_decimal( wp_unslash( $_POST['sale_price'] ?? '' ) ),
-			'stock_quantity' => wc_stock_amount( wp_unslash( $_POST['stock_quantity'] ?? 0 ) ),
-		);
+			'sku'            => $product_sku,
+			'regular_price'  => $product_regular,
+			'sale_price'     => $product_sale,
+			'stock_quantity' => $product_stock,
+		); // phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery,WordPress.DB.DirectDatabaseQuery.NoCaching
 
 		if ( ! in_array( 'name', $editable, true ) ) {
 			unset( $payload['name'] );
@@ -584,21 +613,27 @@ class WB_FSM_Products {
 
 		if ( 'variable' === $product_type ) {
 			$payload['variations'] = array();
-			$variation_ids         = array_map( 'absint', (array) wp_unslash( $_POST['variation_ids'] ?? array() ) );
-			$variation_ids         = array_values( array_unique( array_filter( $variation_ids ) ) );
-			$variation_sku         = (array) wp_unslash( $_POST['variation_sku'] ?? array() );
-			$variation_price       = (array) wp_unslash( $_POST['variation_regular_price'] ?? array() );
-			$variation_sale        = (array) wp_unslash( $_POST['variation_sale_price'] ?? array() );
-			$variation_stock       = (array) wp_unslash( $_POST['variation_stock_quantity'] ?? array() );
-			$variation_state       = (array) wp_unslash( $_POST['variation_enabled'] ?? array() );
+				// phpcs:ignore WordPress.Security.NonceVerification.Missing -- Nonce verified in handle_save_product().
+				$variation_ids         = array_map( 'absint', (array) wp_unslash( $_POST['variation_ids'] ?? array() ) );
+				$variation_ids         = array_values( array_unique( array_filter( $variation_ids ) ) );
+					// phpcs:ignore WordPress.Security.NonceVerification.Missing,WordPress.Security.ValidatedSanitizedInput.InputNotSanitized -- Nonce verified in handle_save_product().
+					$variation_sku         = array_map( 'sanitize_text_field', (array) wp_unslash( $_POST['variation_sku'] ?? array() ) );
+					// phpcs:ignore WordPress.Security.NonceVerification.Missing,WordPress.Security.ValidatedSanitizedInput.InputNotSanitized -- Nonce verified in handle_save_product().
+					$variation_price       = array_map( 'sanitize_text_field', (array) wp_unslash( $_POST['variation_regular_price'] ?? array() ) );
+					// phpcs:ignore WordPress.Security.NonceVerification.Missing,WordPress.Security.ValidatedSanitizedInput.InputNotSanitized -- Nonce verified in handle_save_product().
+					$variation_sale        = array_map( 'sanitize_text_field', (array) wp_unslash( $_POST['variation_sale_price'] ?? array() ) );
+					// phpcs:ignore WordPress.Security.NonceVerification.Missing,WordPress.Security.ValidatedSanitizedInput.InputNotSanitized -- Nonce verified in handle_save_product().
+					$variation_stock       = array_map( 'sanitize_text_field', (array) wp_unslash( $_POST['variation_stock_quantity'] ?? array() ) );
+					// phpcs:ignore WordPress.Security.NonceVerification.Missing,WordPress.Security.ValidatedSanitizedInput.InputNotSanitized -- Nonce verified in handle_save_product().
+					$variation_state       = array_map( 'absint', (array) wp_unslash( $_POST['variation_enabled'] ?? array() ) );
 
 			foreach ( $variation_ids as $variation_id ) {
 				$payload['variations'][] = array(
 					'id'             => $variation_id,
 					'sku'            => sanitize_text_field( (string) ( $variation_sku[ $variation_id ] ?? '' ) ),
-					'regular_price'  => wc_format_decimal( $variation_price[ $variation_id ] ?? '' ),
-					'sale_price'     => wc_format_decimal( $variation_sale[ $variation_id ] ?? '' ),
-					'stock_quantity' => wc_stock_amount( $variation_stock[ $variation_id ] ?? 0 ),
+						'regular_price'  => wc_format_decimal( sanitize_text_field( (string) ( $variation_price[ $variation_id ] ?? '' ) ) ),
+						'sale_price'     => wc_format_decimal( sanitize_text_field( (string) ( $variation_sale[ $variation_id ] ?? '' ) ) ),
+						'stock_quantity' => wc_stock_amount( sanitize_text_field( (string) ( $variation_stock[ $variation_id ] ?? '0' ) ) ),
 					'enabled'        => ! empty( $variation_state[ $variation_id ] ) ? 1 : 0,
 				);
 			}
@@ -615,8 +650,10 @@ class WB_FSM_Products {
 	 * @return array<int,array{name:string,values:array<int,string>}>
 	 */
 	private function collect_variation_blueprint(): array {
+		// phpcs:ignore WordPress.Security.NonceVerification.Missing -- Nonce verified in handle_save_product().
 		$names  = array_map( 'sanitize_text_field', (array) wp_unslash( $_POST['variation_attr_name'] ?? array() ) );
-		$values = (array) wp_unslash( $_POST['variation_attr_values'] ?? array() );
+			// phpcs:ignore WordPress.Security.NonceVerification.Missing,WordPress.Security.ValidatedSanitizedInput.InputNotSanitized -- Nonce verified in handle_save_product().
+			$values = array_map( 'sanitize_text_field', (array) wp_unslash( $_POST['variation_attr_values'] ?? array() ) );
 
 		$blueprint = array();
 		foreach ( $names as $idx => $name ) {
@@ -771,5 +808,17 @@ class WB_FSM_Products {
 		}
 
 		return $combinations;
+	}
+
+	/**
+	 * Safe GET reader for listing filters.
+	 *
+	 * @param string $key Query key.
+	 * @param string $default Default fallback.
+	 * @return string
+	 */
+	private static function get_query_arg( string $key, string $default = '' ): string {
+		$value = filter_input( INPUT_GET, $key, FILTER_UNSAFE_RAW );
+		return null !== $value ? (string) wp_unslash( $value ) : $default;
 	}
 }

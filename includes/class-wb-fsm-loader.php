@@ -119,13 +119,14 @@ class WB_FSM_Loader {
 		}
 
 		// Allow frontend form handlers to post through admin-post.php.
-		$pagenow = $GLOBALS['pagenow'] ?? '';
-		if ( 'admin-post.php' === $pagenow ) {
-			$action = sanitize_key( wp_unslash( $_REQUEST['action'] ?? '' ) );
-			if ( 0 === strpos( $action, 'wbfsm_' ) ) {
-				return;
+			$pagenow = $GLOBALS['pagenow'] ?? '';
+			if ( 'admin-post.php' === $pagenow ) {
+				// phpcs:ignore WordPress.Security.NonceVerification.Recommended -- Action routing only, nonce validated by handlers.
+				$action = sanitize_key( wp_unslash( $_REQUEST['action'] ?? '' ) );
+				if ( 0 === strpos( $action, 'wbfsm_' ) ) {
+					return;
+				}
 			}
-		}
 
 		$settings = WB_FSM_Helpers::get_settings();
 		if ( empty( $settings['block_wp_admin'] ) ) {
@@ -140,7 +141,8 @@ class WB_FSM_Loader {
 			return;
 		}
 
-		$screen_page = sanitize_key( wp_unslash( $_GET['page'] ?? '' ) );
+			// phpcs:ignore WordPress.Security.NonceVerification.Recommended -- Read-only admin screen detection.
+			$screen_page = sanitize_key( wp_unslash( $_GET['page'] ?? '' ) );
 		if ( 'wbfsm-settings' === $screen_page && current_user_can( 'manage_options' ) ) {
 			return;
 		}

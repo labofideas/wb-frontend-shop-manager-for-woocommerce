@@ -126,6 +126,7 @@ class WB_FSM_Approvals {
 				'paged'          => max( 1, $page ),
 				'orderby'        => 'date',
 				'order'          => 'DESC',
+				// phpcs:ignore WordPress.DB.SlowDBQuery.slow_db_query_meta_query -- Required status filter for review queue.
 				'meta_query'     => array(
 					array(
 						'key'   => '_wbfsm_request_status',

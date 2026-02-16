@@ -66,7 +66,7 @@ class WB_FSM_Audit_Logs {
 	public static function add_log( string $action_type, int $object_id, string $object_type, array $before_data = array(), array $after_data = array() ): void {
 		global $wpdb;
 
-		$wpdb->insert(
+		$wpdb->insert( // phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery,WordPress.DB.DirectDatabaseQuery.NoCaching -- Insert into plugin-owned audit table.
 			self::table_name(),
 			array(
 				'user_id'     => get_current_user_id(),
@@ -94,23 +94,73 @@ class WB_FSM_Audit_Logs {
 	public static function get_logs( int $page = 1, int $per_page = 20, array $filters = array(), string $sort_by = 'created_at', string $sort_order = 'desc' ): array {
 		global $wpdb;
 
-		$offset = max( 0, ( $page - 1 ) * $per_page );
-		$table  = self::table_name();
-		$where_data = self::build_where_clause( $filters );
-		$where_sql  = $where_data['sql'];
-		$where_args = $where_data['args'];
-		$order_sql  = self::build_order_clause( $sort_by, $sort_order );
+		$table      = self::table_name();
+		$offset     = max( 0, ( $page - 1 ) * $per_page );
+		$normalized = self::normalize_filters( $filters );
+		$order_by   = self::normalize_sort_key( $sort_by );
+		$order      = self::normalize_sort_order( $sort_order );
 
-		$total_sql      = "SELECT COUNT(*) FROM {$table}{$where_sql}";
-		$prepared_total = ! empty( $where_args ) ? $wpdb->prepare( $total_sql, $where_args ) : $total_sql;
-		$total          = (int) $wpdb->get_var( $prepared_total );
+		$search       = $normalized['search'];
+		$search_like  = '' !== $search ? '%' . self::esc_like( $search ) . '%' : '';
+		$action_type  = $normalized['action_type'];
+		$user_id      = $normalized['user_id'];
+		$date_from    = $normalized['date_from'];
+		$date_to      = $normalized['date_to'];
+		$date_from_gmt = '' !== $date_from ? $date_from . ' 00:00:00' : '';
+		$date_to_gmt   = '' !== $date_to ? $date_to . ' 23:59:59' : '';
 
-		$list_args      = $where_args;
-		$list_args[]    = $per_page;
-		$list_args[]    = $offset;
-		$list_sql       = "SELECT * FROM {$table}{$where_sql} {$order_sql} LIMIT %d OFFSET %d";
-		$prepared_list  = $wpdb->prepare( $list_sql, $list_args );
-		$rows           = $wpdb->get_results( $prepared_list, ARRAY_A );
+		$total = (int) $wpdb->get_var( // phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery,WordPress.DB.DirectDatabaseQuery.NoCaching
+			$wpdb->prepare(
+				'SELECT COUNT(*) FROM %i
+				WHERE ( %s = "" OR action_type LIKE %s OR object_type LIKE %s OR CAST(object_id AS CHAR) LIKE %s )
+					AND ( %s = "" OR action_type = %s )
+					AND ( %d = 0 OR user_id = %d )
+					AND ( %s = "" OR created_at >= %s )
+					AND ( %s = "" OR created_at <= %s )',
+				$table,
+				$search,
+				$search_like,
+				$search_like,
+				$search_like,
+				$action_type,
+				$action_type,
+				$user_id,
+				$user_id,
+				$date_from_gmt,
+				$date_from_gmt,
+				$date_to_gmt,
+				$date_to_gmt
+			)
+		); // phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery,WordPress.DB.DirectDatabaseQuery.NoCaching
+
+		$rows = $wpdb->get_results( // phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery,WordPress.DB.DirectDatabaseQuery.NoCaching,PluginCheck.Security.DirectDB.UnescapedDBParameter
+			$wpdb->prepare(
+				'SELECT * FROM %i
+				WHERE ( %s = "" OR action_type LIKE %s OR object_type LIKE %s OR CAST(object_id AS CHAR) LIKE %s )
+					AND ( %s = "" OR action_type = %s )
+					AND ( %d = 0 OR user_id = %d )
+					AND ( %s = "" OR created_at >= %s )
+					AND ( %s = "" OR created_at <= %s ) '
+				. self::build_safe_order_clause( $order_by, $order ) // phpcs:ignore WordPress.DB.PreparedSQL.NotPrepared
+				. ' LIMIT %d OFFSET %d',
+				$table,
+				$search,
+				$search_like,
+				$search_like,
+				$search_like,
+				$action_type,
+				$action_type,
+				$user_id,
+				$user_id,
+				$date_from_gmt,
+				$date_from_gmt,
+				$date_to_gmt,
+				$date_to_gmt,
+				$per_page,
+				$offset
+			),
+			ARRAY_A
+		); // phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery,WordPress.DB.DirectDatabaseQuery.NoCaching
 
 		return array(
 			'rows'  => is_array( $rows ) ? $rows : array(),
@@ -126,7 +176,7 @@ class WB_FSM_Audit_Logs {
 	public static function get_distinct_action_types(): array {
 		global $wpdb;
 		$table = self::table_name();
-		$rows  = $wpdb->get_col( "SELECT DISTINCT action_type FROM {$table} ORDER BY action_type ASC" );
+		$rows  = $wpdb->get_col( $wpdb->prepare( 'SELECT DISTINCT action_type FROM %i ORDER BY action_type ASC', $table ) ); // phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery,WordPress.DB.DirectDatabaseQuery.NoCaching
 		return array_values( array_filter( array_map( 'sanitize_key', (array) $rows ) ) );
 	}
 
@@ -141,15 +191,46 @@ class WB_FSM_Audit_Logs {
 	public static function export_logs_csv( array $filters = array(), string $sort_by = 'created_at', string $sort_order = 'desc' ): string {
 		global $wpdb;
 		$table      = self::table_name();
-		$where_data = self::build_where_clause( $filters );
-		$where_sql  = $where_data['sql'];
-		$where_args = $where_data['args'];
-		$order_sql  = self::build_order_clause( $sort_by, $sort_order );
-		$sql        = "SELECT created_at, user_id, action_type, object_type, object_id FROM {$table}{$where_sql} {$order_sql}";
-		$prepared   = ! empty( $where_args ) ? $wpdb->prepare( $sql, $where_args ) : $sql;
-		$rows       = $wpdb->get_results( $prepared, ARRAY_A );
+		$normalized = self::normalize_filters( $filters );
+		$order_by   = self::normalize_sort_key( $sort_by );
+		$order      = self::normalize_sort_order( $sort_order );
 
-		$handle = fopen( 'php://temp', 'r+' );
+		$search        = $normalized['search'];
+		$search_like   = '' !== $search ? '%' . self::esc_like( $search ) . '%' : '';
+		$action_type   = $normalized['action_type'];
+		$user_id       = $normalized['user_id'];
+		$date_from     = $normalized['date_from'];
+		$date_to       = $normalized['date_to'];
+		$date_from_gmt = '' !== $date_from ? $date_from . ' 00:00:00' : '';
+		$date_to_gmt   = '' !== $date_to ? $date_to . ' 23:59:59' : '';
+
+		$rows = $wpdb->get_results( // phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery,WordPress.DB.DirectDatabaseQuery.NoCaching,PluginCheck.Security.DirectDB.UnescapedDBParameter
+			$wpdb->prepare(
+				'SELECT created_at, user_id, action_type, object_type, object_id FROM %i
+				WHERE ( %s = "" OR action_type LIKE %s OR object_type LIKE %s OR CAST(object_id AS CHAR) LIKE %s )
+					AND ( %s = "" OR action_type = %s )
+					AND ( %d = 0 OR user_id = %d )
+					AND ( %s = "" OR created_at >= %s )
+					AND ( %s = "" OR created_at <= %s ) '
+				. self::build_safe_order_clause( $order_by, $order ), // phpcs:ignore WordPress.DB.PreparedSQL.NotPrepared
+				$table,
+				$search,
+				$search_like,
+				$search_like,
+				$search_like,
+				$action_type,
+				$action_type,
+				$user_id,
+				$user_id,
+				$date_from_gmt,
+				$date_from_gmt,
+				$date_to_gmt,
+				$date_to_gmt
+			),
+			ARRAY_A
+		); // phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery,WordPress.DB.DirectDatabaseQuery.NoCaching
+
+		$handle = fopen( 'php://temp', 'r+' ); // phpcs:ignore WordPress.WP.AlternativeFunctions.file_system_operations_fopen -- Temporary in-memory stream for CSV output.
 		if ( false === $handle ) {
 			return '';
 		}
@@ -170,62 +251,8 @@ class WB_FSM_Audit_Logs {
 
 		rewind( $handle );
 		$content = stream_get_contents( $handle );
-		fclose( $handle );
+		fclose( $handle ); // phpcs:ignore WordPress.WP.AlternativeFunctions.file_system_operations_fclose -- Closing temporary in-memory stream.
 		return false === $content ? '' : $content;
-	}
-
-	/**
-	 * Build SQL WHERE clause and args for filters.
-	 *
-	 * @param array<string,mixed> $filters Filters.
-	 * @return array{sql: string, args: array<int,mixed>}
-	 */
-	private static function build_where_clause( array $filters ): array {
-		$where_parts = array();
-		$args        = array();
-
-		$search = sanitize_text_field( (string) ( $filters['search'] ?? '' ) );
-		if ( '' !== $search ) {
-			$where_parts[] = '( action_type LIKE %s OR object_type LIKE %s OR CAST(object_id AS CHAR) LIKE %s )';
-			$like          = '%' . self::esc_like( $search ) . '%';
-			$args[]        = $like;
-			$args[]        = $like;
-			$args[]        = $like;
-		}
-
-		$action_type = sanitize_key( (string) ( $filters['action_type'] ?? '' ) );
-		if ( '' !== $action_type ) {
-			$where_parts[] = 'action_type = %s';
-			$args[]        = $action_type;
-		}
-
-		$user_id = absint( $filters['user_id'] ?? 0 );
-		if ( $user_id > 0 ) {
-			$where_parts[] = 'user_id = %d';
-			$args[]        = $user_id;
-		}
-
-		$date_from = sanitize_text_field( (string) ( $filters['date_from'] ?? '' ) );
-		if ( '' !== $date_from && preg_match( '/^\d{4}-\d{2}-\d{2}$/', $date_from ) ) {
-			$where_parts[] = 'created_at >= %s';
-			$args[]        = $date_from . ' 00:00:00';
-		}
-
-		$date_to = sanitize_text_field( (string) ( $filters['date_to'] ?? '' ) );
-		if ( '' !== $date_to && preg_match( '/^\d{4}-\d{2}-\d{2}$/', $date_to ) ) {
-			$where_parts[] = 'created_at <= %s';
-			$args[]        = $date_to . ' 23:59:59';
-		}
-
-		$sql = '';
-		if ( ! empty( $where_parts ) ) {
-			$sql = ' WHERE ' . implode( ' AND ', $where_parts );
-		}
-
-		return array(
-			'sql'  => $sql,
-			'args' => $args,
-		);
 	}
 
 	/**
@@ -240,24 +267,69 @@ class WB_FSM_Audit_Logs {
 	}
 
 	/**
-	 * Build ORDER BY clause using whitelisted columns.
+	 * Normalize filter input.
+	 *
+	 * @param array<string,mixed> $filters Raw filters.
+	 * @return array{search:string,action_type:string,user_id:int,date_from:string,date_to:string}
+	 */
+	private static function normalize_filters( array $filters ): array {
+		$date_from = sanitize_text_field( (string) ( $filters['date_from'] ?? '' ) );
+		$date_to   = sanitize_text_field( (string) ( $filters['date_to'] ?? '' ) );
+
+		if ( ! preg_match( '/^\d{4}-\d{2}-\d{2}$/', $date_from ) ) {
+			$date_from = '';
+		}
+		if ( ! preg_match( '/^\d{4}-\d{2}-\d{2}$/', $date_to ) ) {
+			$date_to = '';
+		}
+
+		return array(
+			'search'      => sanitize_text_field( (string) ( $filters['search'] ?? '' ) ),
+			'action_type' => sanitize_key( (string) ( $filters['action_type'] ?? '' ) ),
+			'user_id'     => absint( $filters['user_id'] ?? 0 ),
+			'date_from'   => $date_from,
+			'date_to'     => $date_to,
+		);
+	}
+
+	/**
+	 * Normalize sort key to known values.
 	 *
 	 * @param string $sort_by Sort key.
+	 * @return string
+	 */
+	private static function normalize_sort_key( string $sort_by ): string {
+		$key = sanitize_key( $sort_by );
+		return in_array( $key, array( 'date', 'user', 'action', 'object' ), true ) ? $key : 'date';
+	}
+
+	/**
+	 * Normalize sort order.
+	 *
 	 * @param string $sort_order Sort order.
 	 * @return string
 	 */
-	private static function build_order_clause( string $sort_by, string $sort_order ): string {
-		$column_map = array(
-			'date'   => 'created_at',
-			'user'   => 'user_id',
-			'action' => 'action_type',
-			'object' => 'object_id',
-		);
+	private static function normalize_sort_order( string $sort_order ): string {
+		return 'asc' === strtolower( $sort_order ) ? 'ASC' : 'DESC';
+	}
 
-		$sort_by    = sanitize_key( $sort_by );
-		$sort_order = 'asc' === strtolower( $sort_order ) ? 'ASC' : 'DESC';
-		$column     = $column_map[ $sort_by ] ?? 'created_at';
+	/**
+	 * Build a deterministic ORDER BY clause from validated inputs.
+	 *
+	 * @param string $order_by Sort key.
+	 * @param string $order Sort direction.
+	 * @return string
+	 */
+	private static function build_safe_order_clause( string $order_by, string $order ): string {
+		$column = 'created_at';
+		if ( 'user' === $order_by ) {
+			$column = 'user_id';
+		} elseif ( 'action' === $order_by ) {
+			$column = 'action_type';
+		} elseif ( 'object' === $order_by ) {
+			$column = 'object_id';
+		}
 
-		return "ORDER BY {$column} {$sort_order}";
+		return "ORDER BY {$column} {$order}, id {$order}";
 	}
 }
