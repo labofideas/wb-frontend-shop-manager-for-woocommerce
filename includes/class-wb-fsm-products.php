@@ -150,6 +150,33 @@ class WB_FSM_Products {
 			$product_type = 'simple';
 		}
 
+		$before_data = array();
+		if ( ! $is_new ) {
+			$product = wc_get_product( $product_id );
+			if ( $product ) {
+				$before_data = $this->snapshot_product( $product );
+				$product_type = $product->is_type( 'variable' ) ? 'variable' : 'simple';
+			}
+		}
+
+		if ( WB_FSM_Approvals::approval_required_for_current_user() ) {
+			$payload    = $this->collect_payload_from_request( $product_id, $product_type, $editable, $posted_status );
+			$request_id = WB_FSM_Approvals::create_request( $product_id, $before_data, $payload );
+			if ( $request_id <= 0 ) {
+				wp_die( esc_html__( 'Unable to submit request for review.', 'wb-frontend-shop-manager-for-woocommerce' ) );
+			}
+
+			$redirect = add_query_arg(
+				array(
+					'wbfsm_tab' => 'products',
+					'wbfsm_msg' => 'product_submitted',
+				),
+				wp_get_referer() ?: home_url( '/' )
+			);
+			wp_safe_redirect( $redirect );
+			exit;
+		}
+
 		$post_data = array(
 			'post_type'    => 'product',
 			'post_title'   => sanitize_text_field( wp_unslash( $_POST['name'] ?? '' ) ),
@@ -169,13 +196,7 @@ class WB_FSM_Products {
 			unset( $post_data['post_status'] );
 		}
 
-		$before_data = array();
 		if ( ! $is_new ) {
-			$product = wc_get_product( $product_id );
-			if ( $product ) {
-				$before_data = $this->snapshot_product( $product );
-				$product_type = $product->is_type( 'variable' ) ? 'variable' : 'simple';
-			}
 			$post_data['ID'] = $product_id;
 			$product_id      = (int) wp_update_post( $post_data, true );
 		} else {
@@ -514,5 +535,74 @@ class WB_FSM_Products {
 
 			$variation->save();
 		}
+	}
+
+	/**
+	 * Collect sanitized payload for approval request.
+	 *
+	 * @param int               $product_id Product ID.
+	 * @param string            $product_type Product type.
+	 * @param array<int,string> $editable Editable fields.
+	 * @param string            $posted_status Status.
+	 * @return array<string,mixed>
+	 */
+	private function collect_payload_from_request( int $product_id, string $product_type, array $editable, string $posted_status ): array {
+		$payload = array(
+			'product_id'     => $product_id,
+			'product_type'   => $product_type,
+			'name'           => sanitize_text_field( wp_unslash( $_POST['name'] ?? '' ) ),
+			'description'    => wp_kses_post( wp_unslash( $_POST['description'] ?? '' ) ),
+			'status'         => $posted_status,
+			'sku'            => sanitize_text_field( wp_unslash( $_POST['sku'] ?? '' ) ),
+			'regular_price'  => wc_format_decimal( wp_unslash( $_POST['regular_price'] ?? '' ) ),
+			'sale_price'     => wc_format_decimal( wp_unslash( $_POST['sale_price'] ?? '' ) ),
+			'stock_quantity' => wc_stock_amount( wp_unslash( $_POST['stock_quantity'] ?? 0 ) ),
+		);
+
+		if ( ! in_array( 'name', $editable, true ) ) {
+			unset( $payload['name'] );
+		}
+		if ( ! in_array( 'description', $editable, true ) ) {
+			unset( $payload['description'] );
+		}
+		if ( ! in_array( 'status', $editable, true ) ) {
+			unset( $payload['status'] );
+		}
+		if ( ! in_array( 'sku', $editable, true ) ) {
+			unset( $payload['sku'] );
+		}
+		if ( ! in_array( 'regular_price', $editable, true ) ) {
+			unset( $payload['regular_price'] );
+		}
+		if ( ! in_array( 'sale_price', $editable, true ) ) {
+			unset( $payload['sale_price'] );
+		}
+		if ( ! in_array( 'stock_quantity', $editable, true ) ) {
+			unset( $payload['stock_quantity'] );
+		}
+
+		if ( 'variable' === $product_type ) {
+			$payload['variations'] = array();
+			$variation_ids         = array_map( 'absint', (array) wp_unslash( $_POST['variation_ids'] ?? array() ) );
+			$variation_ids         = array_values( array_unique( array_filter( $variation_ids ) ) );
+			$variation_sku         = (array) wp_unslash( $_POST['variation_sku'] ?? array() );
+			$variation_price       = (array) wp_unslash( $_POST['variation_regular_price'] ?? array() );
+			$variation_sale        = (array) wp_unslash( $_POST['variation_sale_price'] ?? array() );
+			$variation_stock       = (array) wp_unslash( $_POST['variation_stock_quantity'] ?? array() );
+			$variation_state       = (array) wp_unslash( $_POST['variation_enabled'] ?? array() );
+
+			foreach ( $variation_ids as $variation_id ) {
+				$payload['variations'][] = array(
+					'id'             => $variation_id,
+					'sku'            => sanitize_text_field( (string) ( $variation_sku[ $variation_id ] ?? '' ) ),
+					'regular_price'  => wc_format_decimal( $variation_price[ $variation_id ] ?? '' ),
+					'sale_price'     => wc_format_decimal( $variation_sale[ $variation_id ] ?? '' ),
+					'stock_quantity' => wc_stock_amount( $variation_stock[ $variation_id ] ?? 0 ),
+					'enabled'        => ! empty( $variation_state[ $variation_id ] ) ? 1 : 0,
+				);
+			}
+		}
+
+		return $payload;
 	}
 }

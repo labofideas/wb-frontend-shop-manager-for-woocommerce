@@ -25,6 +25,7 @@ class WB_FSM_Helpers {
 			'editable_fields'           => array( 'name', 'sku', 'regular_price', 'sale_price', 'stock_quantity', 'status', 'description' ),
 			'allow_order_status_update' => 1,
 			'ownership_mode'            => 'shared',
+			'require_product_approval'  => 0,
 		);
 
 		$settings = get_option( 'wbfsm_settings', array() );

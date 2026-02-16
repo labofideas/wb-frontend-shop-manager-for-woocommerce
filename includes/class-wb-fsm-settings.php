@@ -94,6 +94,7 @@ class WB_FSM_Settings {
 			'editable_fields'           => $editable,
 			'allow_order_status_update' => ! empty( $input['allow_order_status_update'] ) ? 1 : 0,
 			'ownership_mode'            => in_array( $input['ownership_mode'] ?? 'shared', array( 'shared', 'restricted' ), true ) ? $input['ownership_mode'] : 'shared',
+			'require_product_approval'  => ! empty( $input['require_product_approval'] ) ? 1 : 0,
 		);
 	}
 
@@ -135,6 +136,10 @@ class WB_FSM_Settings {
 		$dashboard_url     = WB_FSM_Helpers::get_dashboard_url();
 		$setup_state       = sanitize_key( wp_unslash( $_GET['wbfsm_setup'] ?? '' ) );
 		$available_actions = WB_FSM_Audit_Logs::get_distinct_action_types();
+		$request_state     = sanitize_key( wp_unslash( $_GET['wbfsm_request'] ?? '' ) );
+		$request_page      = max( 1, absint( wp_unslash( $_GET['request_page'] ?? 1 ) ) );
+		$request_data      = WB_FSM_Approvals::get_requests( $request_page, 10, 'pending' );
+		$request_pages     = max( 1, (int) ceil( $request_data['total'] / 10 ) );
 		$active_filter_chips = array();
 		if ( '' !== $log_filters['search'] ) {
 			$active_filter_chips[] = sprintf( 'Search: %s', $log_filters['search'] );
@@ -176,6 +181,15 @@ class WB_FSM_Settings {
 
 			<?php if ( 'failed' === $setup_state ) : ?>
 				<div class="notice notice-error is-dismissible"><p><?php esc_html_e( 'Dashboard page could not be created automatically. Please create a page and add [wb_fsm_dashboard] manually.', 'wb-frontend-shop-manager-for-woocommerce' ); ?></p></div>
+			<?php endif; ?>
+			<?php if ( 'approved' === $request_state ) : ?>
+				<div class="notice notice-success is-dismissible"><p><?php esc_html_e( 'Request approved and product updated.', 'wb-frontend-shop-manager-for-woocommerce' ); ?></p></div>
+			<?php endif; ?>
+			<?php if ( 'rejected' === $request_state ) : ?>
+				<div class="notice notice-warning is-dismissible"><p><?php esc_html_e( 'Request rejected.', 'wb-frontend-shop-manager-for-woocommerce' ); ?></p></div>
+			<?php endif; ?>
+			<?php if ( 'failed' === $request_state ) : ?>
+				<div class="notice notice-error is-dismissible"><p><?php esc_html_e( 'Request review failed. Please try again.', 'wb-frontend-shop-manager-for-woocommerce' ); ?></p></div>
 			<?php endif; ?>
 
 			<?php if ( $dashboard_page_id <= 0 ) : ?>
@@ -247,6 +261,10 @@ class WB_FSM_Settings {
 						<label class="wbfsm-toggle">
 							<input type="checkbox" name="wbfsm_settings[allow_order_status_update]" value="1" <?php checked( ! empty( $settings['allow_order_status_update'] ) ); ?> />
 							<span><?php esc_html_e( 'Allow Order Status Update', 'wb-frontend-shop-manager-for-woocommerce' ); ?></span>
+						</label>
+						<label class="wbfsm-toggle">
+							<input type="checkbox" name="wbfsm_settings[require_product_approval]" value="1" <?php checked( ! empty( $settings['require_product_approval'] ) ); ?> />
+							<span><?php esc_html_e( 'Require admin approval for partner product changes', 'wb-frontend-shop-manager-for-woocommerce' ); ?></span>
 						</label>
 					</section>
 				</div>
@@ -328,6 +346,77 @@ class WB_FSM_Settings {
 					<p class="wbfsm-pagination-links">
 						<?php for ( $i = 1; $i <= $log_pages; $i++ ) : ?>
 							<a class="<?php echo $i === $page ? 'is-active' : ''; ?>" href="<?php echo esc_url( add_query_arg( array( 'log_page' => $i, 'log_search' => $log_filters['search'], 'log_action' => $log_filters['action_type'], 'log_user' => $log_filters['user_id'], 'log_from' => $log_filters['date_from'], 'log_to' => $log_filters['date_to'], 'log_sort' => $log_sort_by, 'log_order' => $log_sort_order ) ) ); ?>"><?php echo esc_html( (string) $i ); ?></a>
+						<?php endfor; ?>
+					</p>
+				<?php endif; ?>
+			</section>
+
+			<section class="wbfsm-admin-card wbfsm-admin-card-logs">
+				<div class="wbfsm-admin-card-head">
+					<h2><?php esc_html_e( 'Pending Product Approval Requests', 'wb-frontend-shop-manager-for-woocommerce' ); ?></h2>
+					<span class="wbfsm-chip"><?php echo esc_html( (string) $request_data['total'] ); ?> <?php esc_html_e( 'pending', 'wb-frontend-shop-manager-for-woocommerce' ); ?></span>
+				</div>
+				<table class="widefat striped">
+					<thead>
+						<tr>
+							<th><?php esc_html_e( 'Date', 'wb-frontend-shop-manager-for-woocommerce' ); ?></th>
+							<th><?php esc_html_e( 'User', 'wb-frontend-shop-manager-for-woocommerce' ); ?></th>
+							<th><?php esc_html_e( 'Product', 'wb-frontend-shop-manager-for-woocommerce' ); ?></th>
+							<th><?php esc_html_e( 'Changes', 'wb-frontend-shop-manager-for-woocommerce' ); ?></th>
+							<th><?php esc_html_e( 'Actions', 'wb-frontend-shop-manager-for-woocommerce' ); ?></th>
+						</tr>
+					</thead>
+					<tbody>
+						<?php if ( empty( $request_data['rows'] ) ) : ?>
+							<tr><td colspan="5"><?php esc_html_e( 'No pending requests.', 'wb-frontend-shop-manager-for-woocommerce' ); ?></td></tr>
+						<?php else : ?>
+							<?php foreach ( $request_data['rows'] as $request_row ) : ?>
+								<?php
+								$user_obj     = get_user_by( 'id', (int) $request_row['user_id'] );
+								$product_id   = (int) $request_row['product_id'];
+								$product_name = $product_id > 0 ? get_the_title( $product_id ) : __( '(New Product)', 'wb-frontend-shop-manager-for-woocommerce' );
+								$diff_keys    = array_keys( (array) $request_row['diff'] );
+								$approve_url  = wp_nonce_url(
+									add_query_arg(
+										array(
+											'action'     => 'wbfsm_review_request',
+											'request_id' => (int) $request_row['id'],
+											'decision'   => 'approve',
+										),
+										admin_url( 'admin-post.php' )
+									),
+									'wbfsm_review_request'
+								);
+								$reject_url   = wp_nonce_url(
+									add_query_arg(
+										array(
+											'action'     => 'wbfsm_review_request',
+											'request_id' => (int) $request_row['id'],
+											'decision'   => 'reject',
+										),
+										admin_url( 'admin-post.php' )
+									),
+									'wbfsm_review_request'
+								);
+								?>
+								<tr>
+									<td><?php echo esc_html( get_date_from_gmt( (string) $request_row['created_at_gmt'], 'Y-m-d H:i:s' ) ); ?></td>
+									<td><?php echo esc_html( $user_obj ? $user_obj->display_name . ' (#' . (int) $request_row['user_id'] . ')' : '#' . (int) $request_row['user_id'] ); ?></td>
+									<td><?php echo esc_html( $product_name ); ?></td>
+									<td><?php echo esc_html( ! empty( $diff_keys ) ? implode( ', ', $diff_keys ) : __( 'No field changes detected', 'wb-frontend-shop-manager-for-woocommerce' ) ); ?></td>
+									<td>
+										<a class="button button-primary" href="<?php echo esc_url( $approve_url ); ?>"><?php esc_html_e( 'Approve', 'wb-frontend-shop-manager-for-woocommerce' ); ?></a>
+										<a class="button" href="<?php echo esc_url( $reject_url ); ?>"><?php esc_html_e( 'Reject', 'wb-frontend-shop-manager-for-woocommerce' ); ?></a>
+									</td>
+								</tr>
+							<?php endforeach; ?>
+						<?php endif; ?>
+					</tbody>
+				</table>
+				<?php if ( $request_pages > 1 ) : ?>
+					<p class="wbfsm-pagination-links">
+						<?php for ( $i = 1; $i <= $request_pages; $i++ ) : ?>
+							<a class="<?php echo $i === $request_page ? 'is-active' : ''; ?>" href="<?php echo esc_url( add_query_arg( array( 'request_page' => $i ) ) ); ?>"><?php echo esc_html( (string) $i ); ?></a>
 						<?php endfor; ?>
 					</p>
 				<?php endif; ?>

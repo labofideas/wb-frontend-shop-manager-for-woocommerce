@@ -16,6 +16,7 @@ require_once WBFSM_PATH . 'includes/class-wb-fsm-products.php';
 require_once WBFSM_PATH . 'includes/class-wb-fsm-orders.php';
 require_once WBFSM_PATH . 'includes/class-wb-fsm-settings.php';
 require_once WBFSM_PATH . 'includes/class-wb-fsm-dashboard.php';
+require_once WBFSM_PATH . 'includes/class-wb-fsm-approvals.php';
 
 class WB_FSM_Loader {
 
@@ -55,6 +56,13 @@ class WB_FSM_Loader {
 	private WB_FSM_Dashboard $dashboard;
 
 	/**
+	 * Approvals.
+	 *
+	 * @var WB_FSM_Approvals
+	 */
+	private WB_FSM_Approvals $approvals;
+
+	/**
 	 * Get singleton.
 	 *
 	 * @return WB_FSM_Loader
@@ -75,11 +83,13 @@ class WB_FSM_Loader {
 		$this->orders    = new WB_FSM_Orders();
 		$this->settings  = new WB_FSM_Settings();
 		$this->dashboard = new WB_FSM_Dashboard( $this->products, $this->orders );
+		$this->approvals = new WB_FSM_Approvals();
 
 		$this->products->init();
 		$this->orders->init();
 		$this->settings->init();
 		$this->dashboard->init();
+		$this->approvals->init();
 
 		add_action( 'admin_init', array( $this, 'maybe_block_wp_admin' ), 1 );
 		add_action( 'init', array( $this, 'maybe_upgrade' ) );

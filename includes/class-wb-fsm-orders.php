@@ -10,6 +10,15 @@ if ( ! defined( 'ABSPATH' ) ) {
 }
 
 class WB_FSM_Orders {
+	/**
+	 * Cache group.
+	 */
+	private const CACHE_GROUP = 'wbfsm_orders';
+
+	/**
+	 * Cache version option key.
+	 */
+	private const CACHE_VER_OPTION = 'wbfsm_orders_cache_version';
 
 	/**
 	 * Boot hooks.
@@ -18,6 +27,8 @@ class WB_FSM_Orders {
 	 */
 	public function init(): void {
 		add_action( 'admin_post_wbfsm_update_order_status', array( $this, 'handle_update_order_status' ) );
+		add_action( 'woocommerce_update_order', array( $this, 'bump_cache_version' ) );
+		add_action( 'save_post_product', array( $this, 'bump_cache_version' ) );
 	}
 
 	/**
@@ -205,6 +216,11 @@ class WB_FSM_Orders {
 		if ( empty( $product_ids ) ) {
 			return array();
 		}
+		$cache_key = $this->build_restricted_cache_key( get_current_user_id(), $product_ids, $search, $status );
+		$cached    = wp_cache_get( $cache_key, self::CACHE_GROUP );
+		if ( is_array( $cached ) ) {
+			return array_values( array_filter( array_map( 'absint', $cached ) ) );
+		}
 
 		$lookup_table = $wpdb->prefix . 'wc_order_product_lookup';
 		$hpos_table   = $wpdb->prefix . 'wc_orders';
@@ -242,7 +258,9 @@ class WB_FSM_Orders {
 			}
 
 			$ids = array_values( array_filter( array_map( 'absint', (array) $wpdb->get_col( $prepared ) ) ) );
-			return $this->merge_with_recent_fallback_order_ids( $ids, $search, $status );
+			$ids = $this->merge_with_recent_fallback_order_ids( $ids, $search, $status );
+			wp_cache_set( $cache_key, $ids, self::CACHE_GROUP, 30 );
+			return $ids;
 		}
 
 		$sql = "
@@ -271,7 +289,9 @@ class WB_FSM_Orders {
 		}
 
 		$ids = array_values( array_filter( array_map( 'absint', (array) $wpdb->get_col( $prepared ) ) ) );
-		return $this->merge_with_recent_fallback_order_ids( $ids, $search, $status );
+		$ids = $this->merge_with_recent_fallback_order_ids( $ids, $search, $status );
+		wp_cache_set( $cache_key, $ids, self::CACHE_GROUP, 30 );
+		return $ids;
 	}
 
 	/**
@@ -373,5 +393,59 @@ class WB_FSM_Orders {
 
 		$check = $wpdb->get_var( $wpdb->prepare( 'SHOW TABLES LIKE %s', $table_name ) );
 		return is_string( $check ) && $check === $table_name;
+	}
+
+	/**
+	 * Build deterministic cache key for restricted query result.
+	 *
+	 * @param int            $user_id User ID.
+	 * @param array<int,int> $product_ids Product IDs.
+	 * @param string         $search Search input.
+	 * @param string         $status Status.
+	 * @return string
+	 */
+	private function build_restricted_cache_key( int $user_id, array $product_ids, string $search, string $status ): string {
+		sort( $product_ids, SORT_NUMERIC );
+		$version = (int) get_option( self::CACHE_VER_OPTION, 1 );
+		return 'restricted:' . $version . ':' . md5( wp_json_encode( array( $user_id, $product_ids, $search, $status ) ) );
+	}
+
+	/**
+	 * Bump cache version to invalidate previous entries.
+	 *
+	 * @return void
+	 */
+	public function bump_cache_version( ...$unused ): void { // phpcs:ignore Generic.CodeAnalysis.UnusedFunctionParameter.Found
+		$current = (int) get_option( self::CACHE_VER_OPTION, 1 );
+		update_option( self::CACHE_VER_OPTION, $current + 1, false );
+	}
+
+	/**
+	 * Benchmark helper for restricted-order query path.
+	 *
+	 * @param int $iterations Number of iterations.
+	 * @return array<string,mixed>
+	 */
+	public function benchmark_restricted_query( int $iterations = 10 ): array {
+		$iterations   = max( 1, $iterations );
+		$user_id      = get_current_user_id();
+		$product_ids  = $this->get_accessible_product_ids( $user_id );
+		$total_ms     = 0.0;
+		$row_counts   = array();
+
+		for ( $i = 0; $i < $iterations; $i++ ) {
+			$start = microtime( true );
+			$ids   = $this->get_restricted_order_ids( $product_ids, '', '' );
+			$total_ms += ( microtime( true ) - $start ) * 1000;
+			$row_counts[] = count( $ids );
+		}
+
+		return array(
+			'iterations'  => $iterations,
+			'avg_ms'      => round( $total_ms / $iterations, 2 ),
+			'min_rows'    => empty( $row_counts ) ? 0 : min( $row_counts ),
+			'max_rows'    => empty( $row_counts ) ? 0 : max( $row_counts ),
+			'product_ids' => count( $product_ids ),
+		);
 	}
 }
